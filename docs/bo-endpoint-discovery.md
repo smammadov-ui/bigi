@@ -1,7 +1,7 @@
 # BO endpoint discovery — read-only survey
 
 *2026-07-30 · sources: live BO probes (`bo_get`/`bo_openapi` via the finom-bo MCP) + `backend-rag`
-code search. No writes were performed anywhere.*
++ `frontend-rag` (**portal** repo — the BO UI) code search. No writes were performed anywhere.*
 
 ## Access situation
 
@@ -83,6 +83,47 @@ code search. No writes were performed anywhere.*
    reachable surface depends on the roles behind the token. Probe with `bo_get` before
    building on an endpoint.
 
+## The portal (BO frontend) — definitive TM seizure API surface
+
+`M69/back/backoffice` is an empty stub repo ("init"); the actual portal is the **`portal`**
+frontend repo (indexed by frontend-rag). Its `apps/monitoring/service/seizure.ts` is the UI's
+client for the entire TransactionMonitoring seizure feature — the authoritative endpoint list
+even though the TM backend repo is not in our GitLab ACL:
+
+**Reads**
+- `POST /api/transactionmonitoring/seizures` — **global seizure dashboard** (all companies;
+  filters: prompt, statuses, assignees, countries, raisedOn/resolvedOn/dueDate ranges; sort).
+- `POST /api/transactionmonitoring/company/seizures` — per company *(bigi uses)*.
+- `GET /api/transactionmonitoring/seizures/filters` + `POST …/company/seizures/filters`.
+- `GET /api/transactionmonitoring/seizure/{id}` — detail *(bigi uses)*.
+- `GET /api/transactionmonitoring/seizure/{id}/wait/{version}` — long-poll for live updates.
+
+**Writes** (awareness only)
+- `POST /api/transactionmonitoring/seizure` — create; `PUT …/seizure` — update (IBAN/BIC).
+- `POST …/seizure/process` — initiate seizure transfer; `POST …/seizure/transfer/external` —
+  external transfer (amount); `POST …/seizure/refund`; `POST …/seizure/archive` (comment).
+- `POST …/seizures/note` + `PUT …/files/upload` / `POST …/seizures/notes/file` — notes/files.
+
+**Full `SeizureStatus` enum (18 values — richer than the spec's 10):**
+`Undefined, Created, PendingApproval, Rejected, Approved, Processing, PendingSeizure, Seized,
+PendingTransferApproval, TransferRejected, TransferApproved, PendingTransfer, Transferred,
+Resolved, PendingRefund, Refunded, Archived, Failed, TransferFailed`
+
+> **Open question for ops (spec Q7 revisited):** bigi counts only `Processing` as a competing
+> "bestehende Pfändung" (per the original Q7b answer). The full lifecycle shows pre-Processing
+> states (`Created`, `PendingApproval`, `Approved`, `PendingSeizure`) and captured states
+> (`Seized`, `PendingTransferApproval`, `PendingTransfer`) that arguably also represent
+> existing seizures a §840 declaration must mention. Needs an ops ruling before changing.
+
+**Notable detail fields** (`SeizureRetrieveResponseBody`): `deliveredOn` (BO's own
+Zustellungsdatum — cross-checkable against the ticket's date received), `dueDate` (deadline
+tracking for the §840 response window), `decision`, `processCount`, `fullTransfer`,
+`isDutchFiu`, `walletsIds`, `fourEyeCheckId`, plus the balances already used
+(`seizedAmount`, `allWalletsBalance`, `euroWalletsBalance`).
+
+Also confirmed accessible along the way: `M69/back/aiassistant` (accounting threads) and
+`M69/credits/creditcore` (per-company credit info via its own Backoffice API).
+
 ## Recommended next candidates for bigi (all read-only)
 
 1. **RFI answer pack** — for RFI tickets: transactions for the requested period
@@ -91,4 +132,9 @@ code search. No writes were performed anywhere.*
    RFI tickets (transactions, balances, account opening documents, other seizures).
 2. **Seizure history context** — legacy + TM seizure data merged for the case view.
 3. **TM repo access** — request GitLab access to `M69/back/transactionmonitoring` to confirm
-   seizure create/transition contracts and alert models at the source.
+   seizure create/transition contracts and alert models at the source (the portal client now
+   covers the seizure endpoints; alert models remain unseen).
+4. **Deadline awareness** — surface the seizure's `dueDate` and BO's `deliveredOn` in bigi's
+   case view (cross-check against the ticket's date received).
+5. **Ops ruling on the status enum** — decide which of the 18 statuses count as competing
+   seizures (see the open question above), then adjust `is_processing`/filtering if needed.
