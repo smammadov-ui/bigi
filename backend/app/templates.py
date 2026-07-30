@@ -233,6 +233,13 @@ def build_subject(scenario: str, fields: dict) -> str:
 _DEFAULT_SCENARIO_FOR_TEMPLATE = {"T1": "S1", "T2": "S2", "T6": "S3"}
 
 
+def _clean_segments(value) -> str:
+    """Collapse empty comma segments: "A, , B, ,, C" -> "A, B, C" (ticket
+    address fields often carry blanks for missing components)."""
+    parts = [p.strip() for p in str(value or "").split(",")]
+    return ", ".join(p for p in parts if p)
+
+
 def _flags_for(scenario: str) -> tuple[str, str]:
     """(Kundenbeziehung, Bestehende Pfändungen) flag values per scenario."""
     kunde = {"S1": "Ja", "S2": "Ja", "S3": "Nein"}.get(scenario, "N/A")
@@ -256,8 +263,8 @@ def build_context(template_id: str, fields: dict, comments_de: list[str],
     comments_de = [re.sub(r"\s+", " ", str(c)).strip() for c in (comments_de or [])]
     comments_de = [c for c in comments_de if c]
 
-    creditor_name = str(fields.get("creditor_name") or "")
-    creditor_address = str(fields.get("creditor_address") or "")
+    creditor_name = _clean_segments(fields.get("creditor_name"))
+    creditor_address = _clean_segments(fields.get("creditor_address"))
     amount_de = de_amount(fields.get("seizure_amount"))
     if seized_eur is not None:
         seized_amount = de_amount(seized_eur)

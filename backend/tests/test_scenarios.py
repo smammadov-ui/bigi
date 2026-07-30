@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from app import pipeline
-from tests.fixtures import CASE_REF, IBAN, UUID, company, fields, raw_ticket
+from tests.fixtures import CASE_REF, IBAN, UUID, UUID2, company, fields, raw_ticket
 from tests.stub_bo import StubBO
 
 
@@ -295,3 +295,109 @@ def test_matched_but_unreadable_status_routes_out(monkeypatch, db, client):
     r = pipeline.run_pipeline(db, raw_ticket(fields(seized_iban="")))
     assert r["scenario"] == "ROUTED_OUT"
     assert any("not readable" in n for n in r["plan"]["notes"])
+
+
+# --- Step-0 classification (live cases FPOPCL-24619 / FPOPCL-24605) ----------------
+
+
+CRIMINAL_TICKET = """We received a seizure_warrant request from Staatsanwaltschaft Hannover issued on 2026-05-28 for Alexandru Stog. The amount of the seizure is 43000.00.
+Additional information
+document type: seizure
+seizure type: seizure_warrant
+seizure amount: 43000.00
+date received: 2026-06-03
+debtor name: Alexandru Stog
+case references: NZS 4111 Js 138236/25 VRs
+seized IBANs: DE89370400440532013000
+"""
+
+RFI_TICKET = """We received an RFI of type public_prosecutor_investigation from Staatsanwaltschaft Düsseldorf issued on 2026-05-15 regarding Hasan Kaplan.
+Additional information
+definitive match:
+
+potential match: 11111111-1111-1111-1111-111111111111
+
+rfi type: public_prosecutor_investigation
+
+subject name: Hasan Kaplan
+
+subject IBANs: DE89370400440532013000
+
+requester name: Staatsanwaltschaft Düsseldorf
+
+case references: 123 Js 1092/26
+
+subject date of birth: 1977-01-15
+
+subject Address: Hauptstr. 1, , 60311, Frankfurt
+"""
+
+
+def test_criminal_warrant_routes_out_without_bo_calls(monkeypatch, db, client):
+    stub = StubBO(fixtures={UUID: company()})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    r = pipeline.run_pipeline(db, CRIMINAL_TICKET)
+    assert r["scenario"] == "ROUTED_OUT"
+    assert r["declaration"] is None
+    assert r["account"] is None
+    assert stub.calls == []                       # confidential: BO untouched
+    assert any("criminal" in n.lower() for n in r["plan"]["notes"])
+    assert any("tip" in n.lower() for n in r["plan"]["notes"])
+
+
+def test_rfi_ticket_forced_to_t5(monkeypatch, db, client):
+    fx = company(type_="Freelancer")
+    stub = StubBO(fixtures={UUID: fx})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    r = pipeline.run_pipeline(db, RFI_TICKET)
+    assert r["scenario"] == "RFI"
+    d = r["declaration"]
+    assert d["template"] == "T5" and d["kind"] == "guidance"
+    # Subject/requester aliases parsed -> account resolved for data gathering.
+    assert r["parsed"]["debtor_name"] == "Hasan Kaplan"
+    assert r["parsed"]["creditor_name"] == "Staatsanwaltschaft Düsseldorf"
+    assert r["account"]["company_uuid"] == UUID   # resolved via potential-match UUID
+
+
+def test_prosecutor_creditor_without_warrant_type_routes_out(monkeypatch, db, client):
+    stub = StubBO(fixtures={UUID: company()})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    raw = raw_ticket(fields(creditor_name="Staatsanwaltschaft Hannover"))
+    r = pipeline.run_pipeline(db, raw)
+    assert r["scenario"] == "ROUTED_OUT"
+    assert stub.calls == []
+
+
+def test_civil_public_creditor_still_flows(monkeypatch, db, client):
+    r = run(monkeypatch, db, company())          # Finanzamt Bremen fixture
+    assert r["scenario"] == "S1"
+
+
+# --- S5 with unconfirmed-but-strong identity (FPOPCL-23266) ------------------------
+
+
+def test_s5_fires_on_strong_identity_despite_address_mismatch(monkeypatch, db, client):
+    # Person's private address != company's business address; identity via
+    # definitive ticket UUID -> S5, not S4.
+    fx = company(address={"street": "Bürostr. 2", "zip": "99999", "city": "B"})
+    f = fields(debtor_dob="1980-05-05", debtor_register_number="", seized_iban="",
+               debtor_address="Privatweg 9, 11111 A")
+    stub = StubBO(fixtures={UUID: fx})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    r = pipeline.run_pipeline(db, raw_ticket(f))
+    assert r["scenario"] == "S5"
+    assert r["declaration"]["template"] == "T9"
+
+
+def test_s5_freelancer_lookup_offers_candidates(monkeypatch, db, client):
+    fx = company()                                 # the Company account
+    freelancer_item = {"id": UUID2, "businessName": "ACME GmbH", "regNumber": "",
+                       "type": "Freelancer", "accountStatus": "AccountOpened"}
+    stub = StubBO(fixtures={UUID: fx},
+                  search_items_map={"ACME GmbH": [freelancer_item]})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    f = fields(debtor_dob="1980-05-05", debtor_register_number="")
+    r = pipeline.run_pipeline(db, raw_ticket(f))
+    assert r["status"] == "pending_selection"
+    ids = [c["id"] for c in r["account"]["candidates"]]
+    assert UUID2 in ids and UUID in ids            # freelancer + the company

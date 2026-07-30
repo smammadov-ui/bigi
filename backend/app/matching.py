@@ -458,6 +458,23 @@ def _identify(client, parsed: dict, manual_uuid: str | None, reasons: list[str])
     return {"company_uuid": ""}
 
 
+def _find_freelancers_by_name(client, full_name: str) -> list[dict]:
+    """Freelancer-typed cstools hits for a person's name (spec Q10b lookup).
+
+    Best-effort: tries the name variants until items come back; BO failures
+    resolve to an empty list (the S5 override then applies directly).
+    """
+    for term in name_variants(full_name):
+        try:
+            items = client.cstools_search(term).get("items") or []
+        except BOError:
+            return []
+        if items:
+            return [it for it in items
+                    if str(it.get("type", "")).strip().lower() == "freelancer"][:5]
+    return []
+
+
 def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
     """Run Step 1+2; see module docstring. Never returns a guessed account.
 
@@ -602,9 +619,33 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
             f"identity accepted from {ident.get('identified_by')!r}")
 
     # --- person-vs-company override (Scenario 5) -------------------------------
-    if outcome == MatchOutcome.MATCH.value and is_physical_person(parsed) and account_type == "Company":
+    # A request against a physical person whose resolved account is a Company.
+    # The person's PRIVATE address naturally differs from the company's business
+    # address, so this must also fire on a strong identity WITHOUT a confirmed
+    # match (live case FPOPCL-23266). Per spec Q10b, first check whether the
+    # person has their own Freelancer account — if one exists, the operator
+    # picks the right target instead of bigi guessing.
+    if (is_physical_person(parsed) and account_type == "Company"
+            and (outcome == MatchOutcome.MATCH.value or strong_identity)):
+        freelancers = _find_freelancers_by_name(client, parsed.get("debtor_name") or "")
+        freelancers = [f for f in freelancers if f.get("id") != company_uuid]
+        if freelancers:
+            reasons.append(
+                "request targets a physical person; a Freelancer account exists "
+                "for that name — operator must pick the target")
+            current = {"id": company_uuid, "businessName": business_name,
+                       "regNumber": (item.get("regNumber", "") if isinstance(item, dict) else "")}
+            return _base(
+                candidates=[_candidate(f) for f in freelancers] + [current],
+                needs_selection=True,
+                error=("the request targets a physical person and a Freelancer "
+                       "account exists under that name — pick the account the "
+                       "seizure is directed at"),
+                reasons=reasons, seized_iban=seized_iban)
         outcome = MatchOutcome.PERSON_VS_COMPANY.value
-        reasons.append("request is a physical person but the account is a Company -> PERSON_VS_COMPANY")
+        reasons.append(
+            "request is a physical person but the account is a Company "
+            "(no Freelancer account found) -> PERSON_VS_COMPANY")
 
     return _base(
         company_uuid=company_uuid, business_name=business_name,

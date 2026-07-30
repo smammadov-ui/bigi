@@ -76,6 +76,20 @@ _KEY_MAP: dict[str, str] = {
     "debtor tax id": "debtor_tax_id",
     "debtor register number": "debtor_register_number",
     "debtor lr": "debtor_legal_rep",
+    # RFI tickets use the subject/requester vocabulary (live FPOPCL-24605) —
+    # aliased onto the debtor/creditor fields so identification + confirmation
+    # work unchanged for information requests.
+    "subject name": "debtor_name",
+    "subject lr": "debtor_legal_rep",
+    "subject ibans": "debtor_ibans",
+    "subject date of birth": "debtor_dob",
+    "subject tax id": "debtor_tax_id",
+    "subject register number": "debtor_register_number",
+    "subject address": "debtor_address",
+    "rfi type": "seizure_type",
+    "requester name": "creditor_name",
+    "requester email": "creditor_email",
+    "requester address": "creditor_address",
 }
 
 # Keys that carry their own value (not in _KEY_MAP) but are still real field
@@ -100,6 +114,13 @@ _NOISE_ONLY_RE = re.compile(
 _CREDITOR_NAME_RE = re.compile(
     r"(?:seizure\s+request|request)\s+from\s+(.+?)\s+issued\s+on", re.IGNORECASE
 )
+# Old tickets carry the amount only in prose: "The amount of the seizure is 6487.21."
+_PROSE_AMOUNT_RE = re.compile(
+    r"amount\s+of\s+the\s+seizure\s+is\s+([\d.,]+)", re.IGNORECASE
+)
+# Porters sometimes serializes case references as a Python-repr list of dicts:
+# "[{'reference': '2814/... F'}, {'reference': 'SG 11/30'}]" -> "2814/... F, SG 11/30"
+_REFERENCE_ITEM_RE = re.compile(r"'reference'\s*:\s*'([^']*)'")
 # ``issued on <date>`` where the date is ISO / DD.MM.YYYY / DD/MM/YYYY.
 _ISSUED_DATE_RE = re.compile(
     r"issued\s+on\s+(\d{1,4}[-./]\d{1,2}[-./]\d{1,4})", re.IGNORECASE
@@ -237,6 +258,18 @@ def parse_jira(raw_text: str) -> dict:
         prose_lines = lines[:first_field_idx]
     comment = _strip_noise("\n".join(prose_lines).strip())
     fields["comment"] = comment
+
+    # Case references may arrive as a repr'd list of dicts — flatten to the
+    # plain reference strings (comma-joined).
+    refs = _REFERENCE_ITEM_RE.findall(fields["case_references"])
+    if refs:
+        fields["case_references"] = ", ".join(r.strip() for r in refs if r.strip())
+
+    # Old tickets carry the amount only in prose — fall back to it.
+    if not fields["seizure_amount"]:
+        m = _PROSE_AMOUNT_RE.search(raw_text)
+        if m:
+            fields["seizure_amount"] = m.group(1).rstrip(".")
 
     # --- Step 3: seizure_amount (normalise; never store 0) -------------------
     raw_amount = fields["seizure_amount"]

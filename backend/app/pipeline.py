@@ -43,6 +43,7 @@ from . import checks as checks_mod
 from . import llm
 from .amounts import compute_seized_amount
 from .bo_client import BOClient, BOError
+from .classify import CRIMINAL, RFI_KIND, classify_ticket
 from .formatting import de_amount
 from .matching import match_account
 from .parser import parse_jira
@@ -98,6 +99,24 @@ def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None) ->
             "account": None, "alerts": None, "balance": None, "seizure_check": None,
             "scenario": None, "plan": None, "amount": None, "declaration": None,
             "warnings": [f"halted: {r}" for r in parsed["halt_reasons"]],
+        }
+
+    # --- Step 1b: classify the ticket (criminal / RFI / civil) — Step 0 of the
+    # decision algorithm; runs BEFORE any BO call.
+    kind, cls_notes = classify_ticket(raw_text, fields)
+    if kind == CRIMINAL:
+        notes = cls_notes + [
+            "criminal cases are handled CONFIDENTIALLY via the MNL20 alert "
+            "(manual + four-eyes) — the standard flow would tip the customer off"
+        ]
+        return {
+            "status": "ok",
+            "parsed": parsed,
+            "account": None, "alerts": None, "balance": None, "seizure_check": None,
+            "scenario": Scenario.ROUTED_OUT.value,
+            "plan": build_plan(Scenario.ROUTED_OUT.value, notes),
+            "amount": None, "declaration": None,
+            "warnings": [f"classified: {n}" for n in notes],
         }
 
     # --- Step 2: BO client ----------------------------------------------------
@@ -171,8 +190,14 @@ def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None) ->
             f"{len(bal['non_eur'])} non-EUR wallet(s) excluded from available_eur — verify manually")
 
     # --- Step 7: scenario --------------------------------------------------------
-    checks = {"alerts": alerts, "seizures": sc, "balance": bal}
-    scenario, notes = resolve_scenario(match, checks, fields)
+    if kind == RFI_KIND:
+        # Classified at ticket level: an RFI is never a seizure, whatever the
+        # match/status say. The account data above still helps the operator
+        # gather the requested information.
+        scenario, notes = Scenario.RFI.value, list(cls_notes)
+    else:
+        checks = {"alerts": alerts, "seizures": sc, "balance": bal}
+        scenario, notes = resolve_scenario(match, checks, fields)
     plan = build_plan(scenario, notes)
     warnings.extend(f"resolver: {n}" for n in notes)
 
