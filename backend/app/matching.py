@@ -110,8 +110,30 @@ def _flatten_address(addr) -> str:
     return str(addr or "")
 
 
+def _harvest_strings(o, out: list[str]) -> None:
+    """Collect every non-empty string under ``values`` / ``value`` keys in a subtree."""
+    if isinstance(o, dict):
+        for key in ("values", "value"):
+            v = o.get(key)
+            if isinstance(v, (list, tuple)):
+                out.extend(str(x) for x in v if isinstance(x, (str, int)) and str(x).strip())
+            elif isinstance(v, (str, int)) and str(v).strip():
+                out.append(str(v))
+        for v in o.values():
+            _harvest_strings(v, out)
+    elif isinstance(o, list):
+        for v in o:
+            _harvest_strings(v, out)
+
+
 def _cdd_dob(cdd: dict) -> str:
-    """Best-effort PersonBirthdate out of the nested cdd_profile (or flat stub)."""
+    """Best-effort PersonBirthdate out of the nested cdd_profile (or flat stub).
+
+    The real profile nests ``sections -> subSections -> parameters -> items ->
+    values``: the node carrying ``parameter == "PersonBirthdate"`` may hold its
+    values on CHILD items rather than on itself, so once such a node is found
+    its whole subtree is harvested.
+    """
     if not isinstance(cdd, dict):
         return ""
     if cdd.get("PersonBirthdate"):
@@ -123,16 +145,16 @@ def _cdd_dob(cdd: dict) -> str:
     def walk(o):
         if isinstance(o, dict):
             if o.get("parameter") == "PersonBirthdate":
-                for v in (o.get("values") or []):
-                    found.append(str(v))
-            for v in o.values():
-                walk(v)
+                _harvest_strings(o, found)   # values may sit on child items
+            else:
+                for v in o.values():
+                    walk(v)
         elif isinstance(o, list):
             for v in o:
                 walk(v)
 
     walk(cdd)
-    return next((f for f in found if f), "")
+    return next((f for f in found if f.strip()), "")
 
 
 def _candidate(it: dict) -> dict:
@@ -374,6 +396,20 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
     account_address = _flatten_address(overview.get("address"))
     dob = _cdd_dob(cdd)
     bucket = status_bucket(account_status)
+
+    # Real BO short-info carries the status but NOT accountStatusUpdated. The
+    # date decides S3 (closed before the ticket) vs ROUTED_OUT (closed on/after)
+    # — for a CLOSED account it is worth one extra search read to get it.
+    if bucket == AccountStatusBucket.CLOSED.value and not account_status_updated:
+        try:
+            term = seized_iban or business_name or company_uuid
+            s_items = client.cstools_search(term).get("items") or []
+            enriched = next((it for it in s_items if it.get("id") == company_uuid), None)
+            if enriched and enriched.get("accountStatusUpdated"):
+                account_status_updated = enriched["accountStatusUpdated"]
+                reasons.append("accountStatusUpdated enriched via cstools_search (closed account)")
+        except BOError:
+            reasons.append("accountStatusUpdated unavailable — closed account treated as closed-before-ticket")
 
     # Resolve the seized IBAN from the account's Main wallet when not provided.
     seized_iban_source = "provided" if seized_iban else None

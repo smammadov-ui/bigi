@@ -102,3 +102,67 @@ def test_wallets_failure_reports_error_not_zero():
     # No wallet IBANs to confirm against -> Company falls back to address.
     assert out["outcome"] == "MATCH"
     assert out["matched_by"] == "address"
+
+
+# --- real-BO response quirks ------------------------------------------------------
+
+
+def test_cdd_dob_values_on_child_items():
+    # Real cdd-profile: the parameter node holds its values on CHILD items.
+    cdd = {
+        "sections": [{
+            "subSections": [{
+                "parameters": [{
+                    "parameter": "PersonBirthdate",
+                    "items": [{"values": ["1980-05-05"], "properties": {}}],
+                }],
+            }],
+        }],
+    }
+    from app.matching import _cdd_dob
+    assert _cdd_dob(cdd) == "1980-05-05"
+
+
+def test_cdd_dob_value_scalar_on_child():
+    cdd = {"sections": [{"parameters": [{"parameter": "PersonBirthdate",
+                                         "items": [{"value": "05.05.1980"}]}]}]}
+    from app.matching import _cdd_dob
+    assert _cdd_dob(cdd) == "05.05.1980"
+
+
+def test_cdd_dob_absent_returns_empty():
+    from app.matching import _cdd_dob
+    assert _cdd_dob({"sections": [{"parameters": [{"parameter": "CompanyLegalForm",
+                                                   "items": [{"values": ["GmbH"]}]}]}]}) == ""
+
+
+def test_closed_account_status_updated_enriched_via_search():
+    # Real short-info carries NO accountStatusUpdated; for a CLOSED account the
+    # date decides S3 vs routed-out, so it is enriched from cstools_search.
+    fx = company(status="AccountClosed", updated="2026-03-01T00:00:00Z")
+    fx["short_info"] = {"id": UUID, "businessName": "ACME GmbH",
+                        "status": {"accountStatus": "AccountClosed"}}  # no date
+    stub = StubBO(fixtures={UUID: fx}, search_map={IBAN: UUID})
+    out = match_account(stub, fields())
+    assert out["status_bucket"] == "CLOSED"
+    assert out["account_status_updated"] == "2026-03-01T00:00:00Z"
+    assert any("enriched via cstools_search" in r for r in out["reasons"])
+
+
+def test_closed_account_enrichment_failure_degrades_gracefully():
+    fx = company(status="AccountClosed")
+    fx["short_info"] = {"id": UUID, "status": {"accountStatus": "AccountClosed"}}
+
+    class SearchFailsAfterIdentify(StubBO):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.search_calls = 0
+
+        def cstools_search(self, text):
+            self.search_calls += 1
+            from app.bo_client import BOError
+            raise BOError("cstools_search", 502, "down")
+
+    out = match_account(SearchFailsAfterIdentify(fixtures={UUID: fx}), fields())
+    assert out["account_status_updated"] == ""
+    assert any("closed-before-ticket" in r for r in out["reasons"])

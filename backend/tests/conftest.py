@@ -29,10 +29,12 @@ def _temp_db(tmp_path, monkeypatch):
     """Point BIGI_DB at a fresh temp file and (re)initialize the engine."""
     db_path = tmp_path / "bigi_test.db"
     monkeypatch.setenv("BIGI_DB", f"sqlite:///{db_path}")
-    # Credential env fallbacks must not leak from the developer's shell into
-    # the tests — each test starts with a clean environment.
+    # Credential fallbacks must not leak from the developer's shell OR the
+    # local backend/.env file into the tests. Setting the vars to "" beats
+    # both: real env vars are replaced, and (in pydantic-settings precedence)
+    # an env var — even empty — overrides a dotenv value.
     for var in _CRED_ENV_VARS:
-        monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv(var, "")
     get_settings.cache_clear()
     reset_engine()
     init_db()

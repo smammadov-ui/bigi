@@ -33,17 +33,29 @@ from .formatting import de_amount, de_date
 # ---------------------------------------------------------------------------
 
 
+# BO rule codes come in variants ("MNL21", "MNL-21-FP", "MNL 21"). The decision
+# tree keys on the canonical "MNL<N>" form; anything non-MNL stays as-is (and
+# therefore routes to the operator as an unknown open alert).
+_MNL_RE = re.compile(r"MNL[\s_-]*(\d+)", re.IGNORECASE)
+
+
+def canonical_rule(rule) -> str:
+    """"MNL-21-FP" / "mnl 21" -> "MNL21"; unknown formats pass through."""
+    m = _MNL_RE.search(str(rule or ""))
+    return f"MNL{m.group(1)}" if m else str(rule or "").strip()
+
+
 def open_alert_rules(alerts_items: list[dict]) -> set[str]:
-    """Rule codes of OPEN alerts (resolvedOn is null)."""
+    """CANONICAL rule codes of OPEN alerts (resolvedOn is null)."""
     rules: set[str] = set()
     for a in alerts_items or []:
         if a.get("resolvedOn") is None:  # open
             r = a.get("rules")
             if isinstance(r, (list, tuple)):
-                rules.update(str(x) for x in r)
+                rules.update(canonical_rule(x) for x in r)
             elif r:
-                rules.add(str(r))
-    return rules
+                rules.add(canonical_rule(r))
+    return {r for r in rules if r}
 
 
 def check_alerts(client, company_uuid: str) -> dict:

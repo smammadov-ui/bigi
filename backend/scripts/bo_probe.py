@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.bo_client import BOClient, BOError, is_processing, status_name  # noqa: E402
+from app.checks import canonical_rule, open_alert_rules  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.matching import _cdd_dob, _item_from_short_info, status_bucket  # noqa: E402
 
@@ -79,16 +80,25 @@ def main() -> int:
         item = _item_from_short_info(si, uuid)
         check("accountStatus resolvable (status.accountStatus / paymentAccountStatus.status)",
               bool(item.get("accountStatus")))
-        check("type present", bool(item.get("type")))
-        check("accountStatusUpdated present", bool(item.get("accountStatusUpdated")))
+        # Real short-info carries no type/accountStatusUpdated — bigi takes the
+        # type from overview and (for CLOSED accounts) enriches the status date
+        # via cstools_search, so their absence here is fine.
+        print(f"    type here: {'present' if item.get('type') else 'absent (taken from overview — ok)'}")
+        print("    accountStatusUpdated here: "
+              + ("present" if item.get("accountStatusUpdated")
+                 else "absent (enriched via search for CLOSED accounts — ok)"))
     except BOError as e:
         print(f"2. cstools_short_info: {fail_str(e)} (matching falls back to search — OK if gated)")
 
     # -- 3. overview --------------------------------------------------------------
+    account_type = ""
     try:
         ov = c.cstools_overview(uuid)
         print(f"3. cstools_overview: OK — top keys {sorted(ov.keys())[:12]}")
-        check("type present", bool(ov.get("type")))
+        account_type = str(ov.get("type") or "")
+        check("type present", bool(account_type))
+        if account_type:
+            print(f"    type value: {account_type}")
         addr = ov.get("address")
         check("address present", bool(addr))
         if isinstance(addr, dict):
@@ -104,7 +114,13 @@ def main() -> int:
     try:
         cdd = c.cdd_profile(uuid)
         print(f"4. cdd_profile: OK — top keys {sorted(cdd.keys())[:12]}")
-        check("PersonBirthdate extractable (nested walk)", bool(_cdd_dob(cdd)))
+        dob_found = bool(_cdd_dob(cdd))
+        if account_type.lower() == "freelancer":
+            check("PersonBirthdate extractable (Freelancer DOB rule)", dob_found)
+        else:
+            print(f"    PersonBirthdate: {'found' if dob_found else 'not found'} "
+                  "(only used for Freelancer matching — absence on a Company is fine; "
+                  "re-run against a Freelancer to verify)")
     except BOError as e:
         print(f"4. cdd_profile: {fail_str(e)}")
 
@@ -133,6 +149,13 @@ def main() -> int:
             print(f"    alert keys: {sorted(items[0].keys())}")
             check("alert has rules", "rules" in items[0])
             check("alert has resolvedOn (open = null)", "resolvedOn" in items[0])
+            raw_rules = set()
+            for a in items:
+                r = a.get("rules")
+                raw_rules.update(str(x) for x in (r if isinstance(r, (list, tuple)) else [r]) if x)
+            print(f"    distinct rule codes (raw): {sorted(raw_rules)[:12]}")
+            print(f"    canonical: {sorted({canonical_rule(r) for r in raw_rules})[:12]}")
+            print(f"    OPEN alert rules (drive the scenario): {sorted(open_alert_rules(items))}")
     except BOError as e:
         print(f"6. get_alerts: {fail_str(e)}")
 
@@ -146,6 +169,8 @@ def main() -> int:
             print(f"    row keys: {sorted(rows[0].keys())}")
             statuses = sorted({status_name(r.get('status')) or '?' for r in rows})
             print(f"    statuses seen: {statuses}")
+            for k in ("caseNumber", "created", "seizedAmount"):
+                check(f"listing row has {k}", k in rows[0])
             sid = rows[0].get("id")
             if sid is not None:
                 det = c.get_seizure(sid)

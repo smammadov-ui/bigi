@@ -375,3 +375,26 @@ def test_seizure_row_carries_amounts():
     assert row["seized_amount"] == 2204.08
     assert row["claim_amount"] == 4471.40
     assert row["client_total"] == 0.0
+
+
+# --- real-BO rule-code variants ---------------------------------------------------
+
+
+def test_canonical_rule_variants():
+    from app.checks import canonical_rule
+
+    assert canonical_rule("MNL21") == "MNL21"
+    assert canonical_rule("MNL-21-FP") == "MNL21"
+    assert canonical_rule("mnl 22") == "MNL22"
+    assert canonical_rule("MNL_20") == "MNL20"
+    assert canonical_rule("TM-OTHER-9") == "TM-OTHER-9"   # non-MNL passes through
+    assert canonical_rule(None) == ""
+
+
+def test_open_alert_rules_normalizes_variants():
+    items = [
+        {"rules": ["MNL-21-FP"], "resolvedOn": None},
+        {"rules": ["mnl 22"], "resolvedOn": None},
+        {"rules": ["MNL-20-XX"], "resolvedOn": "2026-01-01"},  # resolved -> ignored
+    ]
+    assert open_alert_rules(items) == {"MNL21", "MNL22"}
