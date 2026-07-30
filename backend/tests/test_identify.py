@@ -131,8 +131,9 @@ def test_multiple_search_hits_exact_reg_match_wins():
 
 
 def test_multiple_inexact_hits_need_selection():
+    # Neither candidate's FULL name equals the ticket's -> operator picks.
     items = [
-        {"id": UUID, "businessName": "ACME GmbH", "regNumber": ""},
+        {"id": UUID, "businessName": "ACME Trading GmbH", "regNumber": ""},
         {"id": UUID2, "businessName": "ACME Holding GmbH", "regNumber": ""},
     ]
     f = fields(company_uuid="", debtor_register_number="", seized_iban="")
@@ -165,3 +166,18 @@ def test_resolved_uuid_reuses_wallets_for_balance():
     assert [w["iban"] for w in out["wallets_items"]] == [IBAN]
     # exactly one wallets call for the resolved company (no duplicate fetch)
     assert [c for c in stub.calls if c[0] == "wallets"] == [("wallets", UUID)]
+
+
+def test_multiple_hits_exact_name_auto_resolves():
+    # One of several candidates carries the ticket's exact (normalized) name
+    # -> it wins without operator selection.
+    items = [
+        {"id": UUID2, "businessName": "ACME Holding GmbH", "regNumber": ""},
+        {"id": UUID, "businessName": "ACME GmbH", "regNumber": ""},
+    ]
+    f = fields(company_uuid="", debtor_register_number="", seized_iban="")
+    stub = StubBO(fixtures={UUID: company()}, search_items_map={"ACME GmbH": items})
+    out = match_account(stub, f)
+    assert out["company_uuid"] == UUID
+    assert out["identified_by"] == "name"
+    assert out["needs_selection"] is False

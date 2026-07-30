@@ -85,7 +85,7 @@ def test_halted_parse_makes_no_bo_call(monkeypatch, db, client):
 
 def test_needs_selection_returns_pending(monkeypatch, db, client):
     items = [
-        {"id": UUID, "businessName": "ACME GmbH", "regNumber": ""},
+        {"id": UUID, "businessName": "ACME Trading GmbH", "regNumber": ""},
         {"id": UUID2, "businessName": "ACME Holding GmbH", "regNumber": ""},
     ]
     _patch(monkeypatch, StubBO(search_items_map={"ACME GmbH": items}))
@@ -100,7 +100,7 @@ def test_needs_selection_returns_pending(monkeypatch, db, client):
 
 def test_repick_with_company_uuid_resolves(monkeypatch, db, client):
     items = [
-        {"id": UUID, "businessName": "ACME GmbH", "regNumber": ""},
+        {"id": UUID, "businessName": "ACME Trading GmbH", "regNumber": ""},
         {"id": UUID2, "businessName": "ACME Holding GmbH", "regNumber": ""},
     ]
     stub = StubBO(fixtures={UUID: company()}, search_items_map={"ACME GmbH": items})

@@ -207,19 +207,74 @@ def _ticket_ibans(parsed: dict) -> list[str]:
     return [i for i in ibans if i]
 
 
-def _pick_search_hit(items: list[dict], kind: str, term: str):
-    """From several search candidates, ONLY an exact key match (regNumber/IBAN)
-    may auto-resolve; otherwise return None and let the operator pick."""
-    if len(items) == 1:
-        return items[0]
+# Trailing German legal-form suffixes, stripped to build a broader search term
+# ("NOV Energys UG (haftungsbeschränkt)" -> "NOV Energys" — how an operator
+# searches). Longest forms first.
+_LEGAL_SUFFIX_RE = re.compile(
+    r"\s+(?:"
+    r"UG\s*\(haftungsbeschränkt\)(?:\s*&\s*Co\.?\s*KG)?|"
+    r"GmbH\s*&\s*Co\.?\s*KGaA|GmbH\s*&\s*Co\.?\s*KG|"
+    r"gGmbH|GmbH|mbH|AG\s*&\s*Co\.?\s*KG|KGaA|AG|UG|SE|"
+    r"OHG|KG|GbR|e\.?\s?K\.?|e\.?\s?V\.?|PartG(?:\s*mbB)?|"
+    r"Ltd\.?|B\.?V\.?|S\.?à\s?r\.?l\.?"
+    r")\s*$",
+    re.IGNORECASE,
+)
+
+
+def name_variants(name: str) -> list[str]:
+    """Search variants for a company name, most exact first: verbatim,
+    whitespace-collapsed, legal-suffix-stripped base (repeatedly). Distinct,
+    non-trivial (>= 4 chars) only."""
+    out: list[str] = []
+
+    def add(s: str) -> None:
+        s = s.strip()
+        if len(s) >= 4 and s not in out:
+            out.append(s)
+
+    raw = str(name or "").strip()
+    add(raw)
+    add(re.sub(r"\s+", " ", raw))
+    base = re.sub(r"\s+", " ", raw)
+    for _ in range(2):  # strip up to two stacked suffixes
+        stripped = _LEGAL_SUFFIX_RE.sub("", base).strip()
+        if stripped == base:
+            break
+        base = stripped
+        add(base)
+    return out
+
+
+def _same_name(a, b) -> bool:
+    """Company names compare equal after whitespace-collapse + casefold —
+    covers BO storing 'UG  (haftungsbeschränkt)' with a double space while the
+    ticket carries a single one."""
+    return bool(_norm(a)) and _norm(a) == _norm(b)
+
+
+def _pick_search_hit(items: list[dict], kind: str, term: str, full_name: str = ""):
+    """From several search candidates, ONLY an exact key match (regNumber/IBAN,
+    or the full normalized company name) may auto-resolve; otherwise return
+    None and let the operator pick."""
     if kind == "register_number":
         t = norm_reg(term)
         hits = [it for it in items if norm_reg(it.get("regNumber")) == t]
-        return hits[0] if len(hits) == 1 else None
+        if len(hits) == 1:
+            return hits[0]
     if kind == "iban":
         t = _norm_iban(term)
         hits = [it for it in items if _norm_iban(it.get("iban")) == t]
-        return hits[0] if len(hits) == 1 else None
+        if len(hits) == 1:
+            return hits[0]
+    if kind == "name":
+        # A relaxed variant search may return several items; the one whose FULL
+        # normalized name equals the ticket's is the exact hit.
+        hits = [it for it in items if _same_name(it.get("businessName"), full_name)]
+        if len(hits) == 1:
+            return hits[0]
+    if len(items) == 1:
+        return items[0]
     return None
 
 
@@ -320,20 +375,34 @@ def _identify(client, parsed: dict, manual_uuid: str | None, reasons: list[str])
         return {"company_uuid": "", "candidates": candidates,
                 "needs_selection": True, "error": error}
 
-    # 4. Search terms in priority order.
-    for kind, term in (("register_number", norm_reg(parsed.get("debtor_register_number"))),
-                       ("iban", (parsed.get("seized_iban") or "").strip()),
-                       ("name", (parsed.get("debtor_name") or "").strip())):
-        if not term:
-            continue
+    # 4. Search terms in priority order. The name search retries with relaxed
+    # variants (whitespace-collapsed, legal-suffix-stripped) — BO's literal
+    # search misses e.g. a double space in the stored name, while an operator
+    # simply types the base name.
+    full_name = (parsed.get("debtor_name") or "").strip()
+    searches: list[tuple[str, str]] = []
+    reg = norm_reg(parsed.get("debtor_register_number"))
+    if reg:
+        searches.append(("register_number", reg))
+    iban = (parsed.get("seized_iban") or "").strip()
+    if iban:
+        searches.append(("iban", iban))
+    searches.extend(("name", v) for v in name_variants(full_name))
+
+    for kind, term in searches:
         items = client.cstools_search(term).get("items") or []
         if not items:
-            continue  # 0 items -> try the next term
-        hit = _pick_search_hit(items, kind, term)
+            continue  # 0 items -> try the next term / variant
+        hit = _pick_search_hit(items, kind, term, full_name=full_name)
         if hit is not None and (hit.get("id") or "").strip():
-            reasons.append(f"identified via cstools_search by {kind}")
+            name_exact = kind == "name" and _same_name(hit.get("businessName"), full_name)
+            reasons.append(
+                f"identified via cstools_search by {kind}"
+                + (f" (variant {term!r})" if kind == "name" and term != full_name else "")
+                + (" — full name equality" if name_exact else ""))
             return {"company_uuid": (hit.get("id") or "").strip(),
                     "identified_by": kind,
+                    "name_exact": name_exact,
                     "business_name": hit.get("businessName", ""),
                     "_search_item": hit}
         # Several inexact candidates -> the operator picks (never guess).
@@ -440,7 +509,8 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
     ticket_dob = (parsed.get("debtor_dob") or "").strip()
     norm_ibans = {_norm_iban(i) for i in ibans}
     strong_identity = ident.get("identified_by") in (
-        "manual", "ticket_uuid", "wallet_iban", "register_number", "iban")
+        "manual", "ticket_uuid", "wallet_iban", "register_number", "iban"
+    ) or bool(ident.get("name_exact"))   # full normalized-name equality
 
     if account_type == "Company":
         comparable = bool(norm_ibans) or bool(account_address)

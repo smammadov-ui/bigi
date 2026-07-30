@@ -201,10 +201,12 @@ def test_closed_account_strong_identity_accepted_without_comparable_data():
 
 
 def test_closed_account_name_hit_stays_no_match_without_data():
-    # A NAME search hit is weak — without comparable data it must NOT match.
+    # A non-exact NAME hit is weak — without comparable data it must NOT match.
+    # (An exact normalized-name hit IS strong — covered separately below.)
     fx = _closed_bare_fixture()
-    fx["search_items"] = [{"id": UUID, "businessName": "ACME GmbH", "regNumber": "",
-                           "accountStatus": "AccountClosed", "type": ""}]
+    fx["search_items"] = [{"id": UUID, "businessName": "ACME Handels GmbH",
+                           "regNumber": "", "accountStatus": "AccountClosed",
+                           "type": ""}]
     f = fields(company_uuid="", seized_iban="", debtor_register_number="")
     stub = StubBO(fixtures={UUID: fx}, search_map={"ACME GmbH": UUID})
     out = match_account(stub, f)
@@ -229,3 +231,84 @@ def test_unknown_type_with_address_match_confirms():
     out = match_account(StubBO(fixtures={UUID: fx}), f)
     assert out["outcome"] == "MATCH"
     assert out["matched_by"] == "address"
+
+
+# --- name-variant search (NOV Energys / double-space class) -----------------------
+
+
+def test_name_variants_builder():
+    from app.matching import name_variants
+
+    assert name_variants("NOV Energys UG (haftungsbeschränkt)") == [
+        "NOV Energys UG (haftungsbeschränkt)", "NOV Energys"]
+    # BO-style double spaces collapse into a second variant before the base.
+    assert name_variants("NOV Energys UG  (haftungsbeschränkt)") == [
+        "NOV Energys UG  (haftungsbeschränkt)",
+        "NOV Energys UG (haftungsbeschränkt)", "NOV Energys"]
+    assert name_variants("Muster GmbH & Co. KG") == ["Muster GmbH & Co. KG", "Muster"]
+    assert name_variants("") == []
+
+
+def test_name_variant_search_with_exact_normalized_name_is_strong():
+    # Jira: single space; BO stores a DOUBLE space -> the literal search misses,
+    # the suffix-stripped variant hits, and full-name equality (whitespace-
+    # collapsed) makes the identity strong enough for a bare closed account.
+    bo_name = "NOV Energys UG  (haftungsbeschränkt)"
+    fx = company(status="AccountClosed", updated="2026-01-05T00:00:00Z",
+                 wallets=[], name=bo_name)
+    fx["overview"] = {}
+    fx["cdd"] = {}
+    fx["short_info"] = {"id": UUID, "businessName": bo_name,
+                        "status": {"accountStatus": "AccountClosed"}}
+    fx["search_items"] = [{"id": UUID, "businessName": bo_name, "regNumber": "",
+                           "accountStatus": "AccountClosed",
+                           "accountStatusUpdated": "2026-01-05T00:00:00Z", "type": ""}]
+    stub = StubBO(fixtures={UUID: fx},
+                  search_items_map={"NOV Energys": fx["search_items"]})
+    f = fields(company_uuid="", seized_iban="", debtor_register_number="",
+               debtor_name="NOV Energys UG (haftungsbeschränkt)")
+    out = match_account(stub, f)
+    assert out["company_uuid"] == UUID
+    assert out["identified_by"] == "name"
+    assert out["outcome"] == "MATCH"
+    assert out["status_bucket"] == "CLOSED"
+    assert any("full name equality" in r for r in out["reasons"])
+    # The literal query ran first and found nothing; the variant resolved it.
+    searched = [t for (c, t) in stub.calls if c == "cstools_search"]
+    assert "NOV Energys UG (haftungsbeschränkt)" in searched
+    assert "NOV Energys" in searched
+
+
+def test_name_variant_hit_with_different_name_stays_weak():
+    # The variant search returns ONE company but its full name differs from the
+    # ticket's -> identified, but weak: a bare closed account stays NO_MATCH.
+    bo_name = "NOV Energys Verwaltungs UG (haftungsbeschränkt)"
+    fx = company(status="AccountClosed", wallets=[], name=bo_name)
+    fx["overview"] = {}
+    fx["cdd"] = {}
+    fx["short_info"] = {"id": UUID, "businessName": bo_name,
+                        "status": {"accountStatus": "AccountClosed"}}
+    fx["search_items"] = [{"id": UUID, "businessName": bo_name, "regNumber": "",
+                           "accountStatus": "AccountClosed", "type": ""}]
+    stub = StubBO(fixtures={UUID: fx},
+                  search_items_map={"NOV Energys": fx["search_items"]})
+    f = fields(company_uuid="", seized_iban="", debtor_register_number="",
+               debtor_name="NOV Energys UG (haftungsbeschränkt)")
+    out = match_account(stub, f)
+    assert out["outcome"] == "NO_MATCH"
+
+
+def test_name_variant_multiple_hits_exact_name_wins():
+    bo_name = "NOV Energys UG  (haftungsbeschränkt)"
+    other = {"id": "99999999-9999-9999-9999-999999999999",
+             "businessName": "NOV Energys Consulting GmbH", "regNumber": ""}
+    exact = {"id": UUID, "businessName": bo_name, "regNumber": "",
+             "accountStatus": "AccountClosed", "type": ""}
+    fx = company(status="AccountClosed", name=bo_name)
+    stub = StubBO(fixtures={UUID: fx},
+                  search_items_map={"NOV Energys": [other, exact]})
+    f = fields(company_uuid="", seized_iban="", debtor_register_number="",
+               debtor_name="NOV Energys UG (haftungsbeschränkt)")
+    out = match_account(stub, f)
+    assert out["company_uuid"] == UUID
+    assert any("full name equality" in r for r in out["reasons"])
