@@ -28,7 +28,7 @@ missing.
 | S6B | Closing + balance left, no Processing seizure | T11 | email (Restbetrag; transfer handled in BO) |
 | INSOLVENCY | Open MNL21 alert | T4 | email |
 | RFI | Open MNL22 alert (information request) | T5 | operator guidance (no seizure, no letter) |
-| ROUTED_OUT | Criminal / restricted / closed-after-ticket / other open alert / undecidable on degraded data | — | operator, no document |
+| ROUTED_OUT | Criminal warrant / Repeal (cancellation) / Restriction (reduction) / compliance-blocked / closed-after-ticket / other open alert / undecidable on degraded data | — | operator, no document (with specific guidance notes) |
 
 Resolution order: **open alerts → match outcome → status bucket → seizures/balance.**
 
@@ -102,9 +102,16 @@ no BO call is made).
 
 `cstools_search`, `cstools_short_info`, `cstools_overview`, `cdd_profile`,
 `wallets` (debt/on-hold-excluding flags), `get_alerts`, `list_seizures`
-(paginated — competing seizures beyond page 1 are never lost), `get_seizure`.
-The INTTOKEN travels only as a `Cookie: INTTOKEN=…` header and is never logged.
-There is deliberately no create/write method in the client.
+(paginated — competing seizures beyond page 1 are never lost), `get_seizure`,
+`whoami`. The INTTOKEN travels only as a `Cookie: INTTOKEN=…` header and is
+never logged. There is deliberately no business-data write in the client.
+
+**Workspaces (FP + PNL):** per the ops SOP, debtors must be searched in BOTH
+workspaces. The workspace is server-side user state, so for the duration of
+one case bigi widens the active selection to all available workspaces
+(`POST /api/cstools/user-context/set` — a session preference, the single
+non-read call) and restores the original selection afterwards; any failure
+degrades to single-workspace with a visible warning.
 
 ## Tests
 

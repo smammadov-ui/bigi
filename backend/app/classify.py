@@ -21,6 +21,8 @@ import re
 CIVIL = "civil_seizure"
 RFI_KIND = "rfi"
 CRIMINAL = "criminal_seizure"
+REPEAL = "seizure_repeal"          # cancellation of an existing seizure
+RESTRICTION = "seizure_restriction"  # reduction of an existing seizure's amount
 
 _RFI_PROSE_RE = re.compile(r"\breceived\s+an\s+RFI\b", re.IGNORECASE)
 _RFI_FIELD_RE = re.compile(r"(?m)^\s*[*\-•]?\s*rfi\s+type\s*:", re.IGNORECASE)
@@ -33,6 +35,20 @@ _PROSECUTOR_RE = re.compile(
 # criminal prosecution docket.
 _JS_DOCKET_RE = re.compile(r"\b\d+\s*Js\s*\d+", re.IGNORECASE)
 
+# Ops SOP Step 5 document types against an EXISTING seizure:
+#   "Repeal"      — cancellation  -> refund the seizure in BO, no TPD
+#   "Restriction" — reduction     -> update the seizure amount in BO, no TPD
+_REPEAL_RE = re.compile(
+    r"seizure[\s_]+(?:repeal|cancellation)|repeal[\s_]+(?:request|of)|"
+    r"aufhebung(?:sbeschluss)?|einstellung\s+der\s+(?:zwangs)?vollstreckung",
+    re.IGNORECASE,
+)
+_RESTRICTION_RE = re.compile(
+    r"seizure[\s_]+(?:restriction|reduction)|(?:restriction|reduction)[\s_]+(?:request|of)|"
+    r"herabsetzung|teilweise\s+aufhebung|ermäßigung\s+der\s+pfändung",
+    re.IGNORECASE,
+)
+
 
 def classify_ticket(raw_text: str, fields: dict) -> tuple[str, list[str]]:
     """Return ``(kind, reasons)`` with kind in {civil_seizure, rfi, criminal_seizure}."""
@@ -43,6 +59,21 @@ def classify_ticket(raw_text: str, fields: dict) -> tuple[str, list[str]]:
         return RFI_KIND, [
             "ticket is an information request (RFI) — gather the requested data; "
             "no seizure, no §840 declaration"
+        ]
+
+    seizure_type_l = str(fields.get("seizure_type") or "").lower()
+    # Documents against an EXISTING seizure come before the criminal check:
+    # an Aufhebungsbeschluss quotes the same authority/docket as the original.
+    if "repeal" in seizure_type_l or "cancel" in seizure_type_l or _REPEAL_RE.search(text):
+        return REPEAL, [
+            "seizure cancellation (Repeal) — refund the existing seizure in BO "
+            "(Seizure Refunded), add a CO note and attach this document; no TPD from this ticket"
+        ]
+    if ("restriction" in seizure_type_l or "reduction" in seizure_type_l
+            or _RESTRICTION_RE.search(text)):
+        return RESTRICTION, [
+            "seizure reduction (Restriction) — update the existing seizure's amount in BO "
+            "per this document, add a CO note and attach it; no TPD from this ticket"
         ]
 
     reasons: list[str] = []

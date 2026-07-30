@@ -444,3 +444,75 @@ def test_limited_account_always_routes_out(monkeypatch, db, client):
                  details={9: {**OWN, "seizedAmount": 1.0}})
     r = run(monkeypatch, db, fx)
     assert r["scenario"] == "ROUTED_OUT"
+
+
+# --- Repeal / Restriction documents (ops SOP Step 5) -------------------------------
+
+
+REPEAL_TICKET = """We received a seizure_repeal request from Finanzamt Bremen issued on 2026-06-20 for ACME GmbH.
+Additional information
+seizure type: seizure_repeal
+date received: 2026-06-22
+debtor name: ACME GmbH
+case references: 2614/239/24045 - VO 05
+definitive match: 11111111-1111-1111-1111-111111111111
+seized IBANs: DE89370400440532013000
+"""
+
+
+def test_repeal_ticket_routes_out_with_guidance(monkeypatch, db, client):
+    fx = company(seizures=[OWN], details={9: {**OWN, "seizedAmount": 500.0}})
+    stub = StubBO(fixtures={UUID: fx})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    r = pipeline.run_pipeline(db, REPEAL_TICKET)
+    assert r["scenario"] == "ROUTED_OUT"
+    assert r["declaration"] is None
+    assert any("Refund" in n or "refund" in n for n in r["plan"]["notes"])
+    # Account + seizures still resolved so the operator sees WHICH seizure.
+    assert r["account"]["company_uuid"] == UUID
+    assert len(r["seizure_check"]["ignored_same_case"]) == 1
+
+
+def test_restriction_ticket_routes_out_with_guidance(monkeypatch, db, client):
+    raw = REPEAL_TICKET.replace("seizure_repeal", "seizure_restriction")
+    stub = StubBO(fixtures={UUID: company()})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    r = pipeline.run_pipeline(db, raw)
+    assert r["scenario"] == "ROUTED_OUT"
+    assert any("update the existing seizure's amount" in n for n in r["plan"]["notes"])
+    assert r["declaration"] is None
+
+
+def test_german_aufhebung_detected_as_repeal(monkeypatch, db, client):
+    raw = raw_ticket().replace(
+        "We received a seizure request from Finanzamt Bremen issued on 2026-01-20.",
+        "Aufhebungsbeschluss: die Pfändung wird aufgehoben (Aufhebung der Vollstreckung).")
+    stub = StubBO(fixtures={UUID: company()})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    r = pipeline.run_pipeline(db, raw)
+    assert r["scenario"] == "ROUTED_OUT"
+    assert any("Repeal" in n for n in r["plan"]["notes"])
+
+
+def test_herabsetzung_detected_as_restriction():
+    from app.classify import RESTRICTION, classify_ticket
+    kind, _ = classify_ticket("Herabsetzung des Pfändungsbetrages auf 1.000,00 EUR", {})
+    assert kind == RESTRICTION
+
+
+def test_repeal_beats_criminal_markers():
+    # An Aufhebungsbeschluss may quote the prosecutor + Js docket of the
+    # original case — it is still a repeal, not a new criminal seizure.
+    from app.classify import REPEAL, classify_ticket
+    kind, _ = classify_ticket(
+        "We received a seizure_repeal request from Staatsanwaltschaft Hannover",
+        {"seizure_type": "seizure_repeal", "case_references": "4111 Js 138236/25"})
+    assert kind == REPEAL
+
+
+def test_plain_seizure_not_misclassified():
+    from app.classify import CIVIL, classify_ticket
+    kind, _ = classify_ticket(
+        "We received a public_creditor_seizure request from Finanzamt Bremen issued on 2026-01-20",
+        {"seizure_type": "public_creditor_seizure", "creditor_name": "Finanzamt Bremen"})
+    assert kind == CIVIL

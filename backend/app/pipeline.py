@@ -43,7 +43,7 @@ from . import checks as checks_mod
 from . import llm
 from .amounts import compute_seized_amount
 from .bo_client import BOClient, BOError
-from .classify import CRIMINAL, RFI_KIND, classify_ticket
+from .classify import CRIMINAL, REPEAL, RESTRICTION, RFI_KIND, classify_ticket
 from .formatting import de_amount
 from .matching import match_account
 from .parser import parse_jira
@@ -217,6 +217,11 @@ def _run_checks_and_compose(db: Session, client, raw_text: str, parsed: dict,
         # match/status say. The account data above still helps the operator
         # gather the requested information.
         scenario, notes = Scenario.RFI.value, list(cls_notes)
+    elif kind in (REPEAL, RESTRICTION):
+        # A document against an EXISTING seizure: the account + seizure data
+        # above shows the operator WHICH seizure to refund/update; bigi itself
+        # never writes, so the case routes out with specific guidance.
+        scenario, notes = Scenario.ROUTED_OUT.value, list(cls_notes)
     else:
         checks = {"alerts": alerts, "seizures": sc, "balance": bal}
         scenario, notes = resolve_scenario(match, checks, fields)
