@@ -51,6 +51,7 @@ from .schemas import BigiError, Scenario
 from .scenarios import build_plan, resolve_scenario
 from .settings_store import bo_config, llm_config
 from .templates import TEMPLATES, build_subject, select_template, template_kind
+from .workspaces import all_workspaces
 
 
 def _account_public(match: dict) -> dict:
@@ -123,6 +124,27 @@ def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None) ->
     bo = bo_config(db)
     client = BOClient(bo.get("base_url", ""), bo.get("inttoken", ""))
 
+    # --- Step 2b: widen to ALL workspaces (SOP: check FP *and* PNL) -----------
+    # Server-side session preference, restored in the finally of the context
+    # manager. On failure the pipeline continues single-workspace with a warning.
+    with all_workspaces(client) as ws:
+        result = _run_checks_and_compose(db, client, raw_text, parsed, fields,
+                                         company_uuid, kind, cls_notes, warnings)
+    if ws.get("switched"):
+        result["warnings"].append(
+            "searched across workspaces: " + ", ".join(ws.get("available") or [])
+            + " (active selection restored)")
+    if ws.get("error"):
+        result["warnings"].append(f"workspaces: {ws['error']}")
+    if ws.get("restore_error"):
+        result["warnings"].append(f"workspaces: {ws['restore_error']}")
+    return result
+
+
+def _run_checks_and_compose(db: Session, client, raw_text: str, parsed: dict,
+                            fields: dict, company_uuid, kind, cls_notes,
+                            warnings: list) -> dict:
+    """Steps 3–10 (matching -> checks -> scenario -> document); see run_pipeline."""
     # --- Step 3: identify + confirm + status (one wallets call, reused) -------
     try:
         match = match_account(client, fields, manual_uuid=company_uuid)

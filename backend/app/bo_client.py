@@ -192,3 +192,24 @@ class BOClient:
             "get_seizure",
             f"/api/transactionmonitoring/seizure/{seizure_id}",
         )
+
+    # -- user context (workspaces) --------------------------------------------
+    # The BO "workspace" (FinomPayments / PnlFintech) is SERVER-SIDE user state
+    # scoped to the INTTOKEN user — the same thing the portal's "Change
+    # Workspace" does. These two calls are the only non-business-data POST in
+    # this client: setting the active contexts is a session preference (bigi
+    # widens it for the duration of one case and restores it afterwards).
+
+    def whoami(self) -> dict:
+        """GET ``/api/cstools/whoami`` -> profile incl. ``contexts`` (available
+        workspaces) and ``activeContexts`` (currently active)."""
+        return self._get("whoami", "/api/cstools/whoami")
+
+    def set_user_contexts(self, contexts: list) -> dict:
+        """POST ``/api/cstools/user-context/set`` — set the ACTIVE workspaces
+        for the current user (session preference; no business data)."""
+        return self._post(
+            "set_user_contexts",
+            "/api/cstools/user-context/set",
+            {"userContexts": list(contexts or [])},
+        )

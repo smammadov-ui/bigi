@@ -25,12 +25,17 @@ class StubBO:
     """
 
     def __init__(self, fixtures: dict | None = None, search_map: dict | None = None,
-                 fail: set[str] | None = None, search_items_map: dict | None = None):
+                 fail: set[str] | None = None, search_items_map: dict | None = None,
+                 profile: dict | None = None):
         self.fixtures = fixtures or {}
         self.search_map = search_map or {}
         self.search_items_map = search_items_map or {}
         self.fail = fail or set()
         self.calls: list[tuple[str, str]] = []
+        # Single workspace by default -> the widening logic is a no-op.
+        self.profile = profile or {"contexts": ["FinomPayments"],
+                                   "activeContexts": ["FinomPayments"]}
+        self.active_contexts = list(self.profile.get("activeContexts") or [])
 
     # -- helpers -------------------------------------------------------------
 
@@ -95,4 +100,15 @@ class StubBO:
             det = (fx.get("seizure_details") or {}).get(seizure_id)
             if det is not None:
                 return det
+        return {}
+
+    def whoami(self) -> dict:
+        self.calls.append(("whoami", ""))
+        self._maybe_fail("whoami")
+        return dict(self.profile)
+
+    def set_user_contexts(self, contexts) -> dict:
+        self.calls.append(("set_user_contexts", ",".join(contexts)))
+        self._maybe_fail("set_user_contexts")
+        self.active_contexts = list(contexts)
         return {}

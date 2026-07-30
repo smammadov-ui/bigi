@@ -243,3 +243,24 @@ def test_client_has_no_write_methods():
     # bigi is read-only toward BO: creating/executing seizures must be impossible.
     for name in ("create_seizure", "tm_create_seizure", "execute", "post_seizure"):
         assert not hasattr(BOClient("", ""), name)
+
+
+def test_whoami_and_user_context_urls(monkeypatch):
+    calls = []
+
+    def fake_get(url, headers=None, timeout=None):
+        calls.append(("GET", url, None))
+        return _FakeResp(200, {"contexts": ["FinomPayments"], "activeContexts": ["FinomPayments"]})
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls.append(("POST", url, json))
+        return _FakeResp(200, {})
+
+    monkeypatch.setattr(bo_client.httpx, "get", fake_get)
+    monkeypatch.setattr(bo_client.httpx, "post", fake_post)
+    c = BOClient("https://bo.example", "tok")
+    c.whoami()
+    c.set_user_contexts(["FinomPayments", "PnlFintech"])
+    assert calls[0][:2] == ("GET", "https://bo.example/api/cstools/whoami")
+    assert calls[1][:2] == ("POST", "https://bo.example/api/cstools/user-context/set")
+    assert calls[1][2] == {"userContexts": ["FinomPayments", "PnlFintech"]}
