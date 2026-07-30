@@ -37,19 +37,26 @@ sys.path.insert(0, str(_BACKEND))
 # app.config resolves .env / bigi.db relative to the CWD; pin it to backend/.
 os.chdir(_BACKEND)
 
+# The high-level server class moved across SDK generations:
+#   mcp >= 2.0  -> mcp.server.MCPServer
+#   mcp 1.x     -> mcp.server.fastmcp.FastMCP
+#   fastmcp pkg -> fastmcp.FastMCP
 try:
-    from mcp.server.fastmcp import FastMCP  # noqa: E402  (official `mcp` SDK)
+    from mcp.server import MCPServer as FastMCP  # noqa: E402  (mcp >= 2.0)
 except ImportError:  # pragma: no cover
     try:
-        from fastmcp import FastMCP  # noqa: E402  (standalone `fastmcp` package)
+        from mcp.server.fastmcp import FastMCP  # noqa: E402  (mcp 1.x)
     except ImportError:
-        print(
-            "bo_mcp: the MCP SDK is missing in THIS venv. Install it with:\n"
-            f"  {_BACKEND}/.venv/bin/pip install -U mcp\n"
-            "then fully restart the Claude app.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
+        try:
+            from fastmcp import FastMCP  # noqa: E402  (standalone package)
+        except ImportError:
+            print(
+                "bo_mcp: the MCP SDK is missing in THIS venv. Install it with:\n"
+                f"  {_BACKEND}/.venv/bin/pip install -U mcp\n"
+                "then fully restart the Claude app.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
 
 from app.bo_client import BOClient, BOError  # noqa: E402
 from app.config import get_settings  # noqa: E402
