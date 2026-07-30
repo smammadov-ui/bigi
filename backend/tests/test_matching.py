@@ -175,3 +175,57 @@ def test_epoch_account_status_updated_normalized():
     out = match_account(StubBO(fixtures={UUID: fx}, search_map={IBAN: UUID}), fields())
     assert out["account_status_updated"] == "2026-02-01"
     assert out["status_bucket"] == "CLOSED"
+
+
+# --- closed-account confirmation (FPOPCL-24636 class of tickets) -----------------
+
+
+def _closed_bare_fixture(updated="2026-01-05T00:00:00Z"):
+    """A CLOSED account as real BO serves it: no wallets, no address, no type."""
+    fx = company(status="AccountClosed", updated=updated, wallets=[])
+    fx["overview"] = {}          # closed accounts often lose overview data
+    fx["cdd"] = {}
+    fx["short_info"] = {"id": UUID, "businessName": "ACME GmbH",
+                        "status": {"accountStatus": "AccountClosed"}}
+    return fx
+
+
+def test_closed_account_strong_identity_accepted_without_comparable_data():
+    # Definitive ticket UUID + nothing comparable in BO -> MATCH (not S4).
+    stub = StubBO(fixtures={UUID: _closed_bare_fixture()}, search_map={IBAN: UUID})
+    out = match_account(stub, fields())
+    assert out["outcome"] == "MATCH"
+    assert out["matched_by"] == "ticket_uuid"
+    assert out["status_bucket"] == "CLOSED"
+    assert any("identity accepted" in r for r in out["reasons"])
+
+
+def test_closed_account_name_hit_stays_no_match_without_data():
+    # A NAME search hit is weak — without comparable data it must NOT match.
+    fx = _closed_bare_fixture()
+    fx["search_items"] = [{"id": UUID, "businessName": "ACME GmbH", "regNumber": "",
+                           "accountStatus": "AccountClosed", "type": ""}]
+    f = fields(company_uuid="", seized_iban="", debtor_register_number="")
+    stub = StubBO(fixtures={UUID: fx}, search_map={"ACME GmbH": UUID})
+    out = match_account(stub, f)
+    assert out["outcome"] == "NO_MATCH"
+
+
+def test_strong_identity_does_not_override_real_mismatch():
+    # Comparable data present and mismatching -> still NO_MATCH, even with a
+    # definitive ticket UUID.
+    fx = company(address={"street": "Elsewhere 9", "zip": "99999", "city": "X"},
+                 wallets=[{"id": "w1", "iban": "DE02120300000000202051",
+                           "name": "Main", "balance": 1.0, "currency": "EUR"}])
+    out = match_account(StubBO(fixtures={UUID: fx}), fields())
+    assert out["outcome"] == "NO_MATCH"
+
+
+def test_unknown_type_with_address_match_confirms():
+    fx = company(type_="")          # type lost (closed/onboarding)
+    fx["overview"] = {"address": {"street": "Hauptstr. 1", "zip": "60311",
+                                  "city": "Frankfurt"}}
+    f = fields(seized_iban="")
+    out = match_account(StubBO(fixtures={UUID: fx}), f)
+    assert out["outcome"] == "MATCH"
+    assert out["matched_by"] == "address"

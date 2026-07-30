@@ -113,7 +113,17 @@ def resolve_scenario(match: dict, checks: dict, parsed: dict) -> tuple[str, list
         covered = processing_count > 0 or float(available) <= 0
         return (Scenario.S6A.value if covered else Scenario.S6B.value), notes
 
-    # OPEN (or UNKNOWN-but-matched) bucket
+    if bucket == AccountStatusBucket.UNKNOWN.value:
+        # A MATCH whose status we could not read (or an unmapped enum value)
+        # must not silently claim an active customer relationship (S1/S2 both
+        # assert Kundenbeziehung: Ja). Operator review instead.
+        status = match.get("account_status") or ""
+        notes.append(
+            f"account status {status!r} not readable/mapped — cannot assert the "
+            "customer relationship; operator review")
+        return Scenario.ROUTED_OUT.value, notes
+
+    # OPEN bucket
     if seizures_assumed:
         notes.append("seizure listing unavailable — S1/S2 split assumed (S1); verify before sending")
     if processing_count > 0:

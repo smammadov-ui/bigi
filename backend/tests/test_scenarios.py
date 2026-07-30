@@ -264,3 +264,34 @@ def test_closed_after_ticket_with_epoch_date_routes_out(monkeypatch, db, client)
     fx = company(status="AccountClosed", updated=1772323200000)  # 2026-03-01
     r = run(monkeypatch, db, fx)   # received 2026-02-01
     assert r["scenario"] == "ROUTED_OUT"
+
+
+def test_closed_bare_account_resolves_s3_not_s4(monkeypatch, db, client):
+    # FPOPCL-24636 class: ticket received AFTER closure; BO has no wallets/
+    # address/type left for the account. Must be S3 (T6), not S4 (T7).
+    fx = company(status="AccountClosed", updated="2026-01-05T00:00:00Z", wallets=[])
+    fx["overview"] = {}
+    fx["cdd"] = {}
+    fx["short_info"] = {"id": UUID, "businessName": "ACME GmbH",
+                        "status": {"accountStatus": "AccountClosed"}}
+    stub = StubBO(fixtures={UUID: fx}, search_map={IBAN: UUID})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    r = pipeline.run_pipeline(db, raw_ticket(fields(seized_iban="")))
+    assert r["scenario"] == "S3"
+    d = r["declaration"]
+    assert d["template"] == "T6" and d["kind"] == "letter"
+    assert "Kundenbeziehung besteht: Nein" in d["text"]
+
+
+def test_matched_but_unreadable_status_routes_out(monkeypatch, db, client):
+    # Strong identity accepted with NO readable account status -> never S1.
+    fx = company(status="", wallets=[])
+    fx["overview"] = {}
+    fx["cdd"] = {}
+    fx["short_info"] = {"id": UUID, "businessName": "ACME GmbH", "status": {}}
+    fx["search_items"] = []
+    stub = StubBO(fixtures={UUID: fx})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    r = pipeline.run_pipeline(db, raw_ticket(fields(seized_iban="")))
+    assert r["scenario"] == "ROUTED_OUT"
+    assert any("not readable" in n for n in r["plan"]["notes"])

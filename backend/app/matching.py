@@ -427,10 +427,26 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
             reasons.append(f"seized_iban derived from the account's {w.get('name', '?')!r} wallet")
 
     # --- confirmation (match priority) ----------------------------------------
+    # "Comparable data" is what BO actually offers to check the identity
+    # against, per account type. Closed accounts routinely have NO wallets and
+    # a bare overview — absence of data must not be treated as a mismatch when
+    # the identity itself came from a strong key (definitive ticket UUID,
+    # operator selection, wallet-IBAN ownership, register number, or an IBAN
+    # search hit — BO itself resolved that key to this company). A NAME search
+    # hit stays weak: without comparable data it remains NO_MATCH.
     outcome = MatchOutcome.NO_MATCH.value
     matched_by = "none"
     ticket_provided_iban = (parsed.get("seized_iban") or "").strip()
+    ticket_dob = (parsed.get("debtor_dob") or "").strip()
     norm_ibans = {_norm_iban(i) for i in ibans}
+    strong_identity = ident.get("identified_by") in (
+        "manual", "ticket_uuid", "wallet_iban", "register_number", "iban")
+
+    if account_type == "Company":
+        comparable = bool(norm_ibans) or bool(account_address)
+    else:  # Freelancer or unknown
+        comparable = bool(norm_ibans) or bool(account_address) or bool(dob)
+
     if ticket_provided_iban and _norm_iban(ticket_provided_iban) in norm_ibans:
         outcome, matched_by = MatchOutcome.MATCH.value, "iban"
         reasons.append("IBAN match (overrides name/address)")
@@ -444,13 +460,31 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
         if _addr_match(parsed.get("debtor_address", ""), account_address):
             outcome, matched_by = MatchOutcome.MATCH.value, "address"
             reasons.append("Freelancer: address match")
-        elif (parsed.get("debtor_dob") or "").strip() and _norm(parsed["debtor_dob"]) == _norm(dob):
+        elif ticket_dob and _norm(ticket_dob) == _norm(dob):
             outcome, matched_by = MatchOutcome.MATCH.value, "dob"
             reasons.append("Freelancer: DOB match")
         else:
             reasons.append("Freelancer: address AND DOB mismatch -> NO_MATCH")
     else:
-        reasons.append(f"unknown account type {account_type!r} -> NO_MATCH")
+        # Unknown type (closed/onboarding accounts often lose it): apply the
+        # lenient rule — any positive address/DOB evidence confirms.
+        if _addr_match(parsed.get("debtor_address", ""), account_address):
+            outcome, matched_by = MatchOutcome.MATCH.value, "address"
+            reasons.append(f"unknown account type {account_type!r}: address match")
+        elif ticket_dob and dob and _norm(ticket_dob) == _norm(dob):
+            outcome, matched_by = MatchOutcome.MATCH.value, "dob"
+            reasons.append(f"unknown account type {account_type!r}: DOB match")
+        else:
+            reasons.append(f"unknown account type {account_type!r} and no positive evidence -> NO_MATCH")
+
+    if outcome == MatchOutcome.NO_MATCH.value and strong_identity and not comparable:
+        # Nothing to compare against (typical for a CLOSED account) and the
+        # identity came from a strong key -> accept it, with a visible reason.
+        outcome = MatchOutcome.MATCH.value
+        matched_by = ident.get("identified_by") or "strong_identity"
+        reasons.append(
+            "no comparable IBAN/address/DOB data in BO (closed account?) — "
+            f"identity accepted from {ident.get('identified_by')!r}")
 
     # --- person-vs-company override (Scenario 5) -------------------------------
     if outcome == MatchOutcome.MATCH.value and is_physical_person(parsed) and account_type == "Company":
