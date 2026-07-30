@@ -143,10 +143,6 @@ def jira_issue(issue_key: str) -> dict:
         db.close()
 
 
-if __name__ == "__main__":
-    mcp.run()
-
-
 @mcp.tool()
 def case_trace(issue_key: str, company_uuid: str = "", use_llm: bool = False) -> dict:
     """Fetch a Jira ticket and run bigi's FULL read-only pipeline on it
@@ -182,3 +178,7 @@ def case_trace(issue_key: str, company_uuid: str = "", use_llm: bool = False) ->
         return {"error": True, "detail": f"{type(exc).__name__}: {str(exc)[:800]}"}
     finally:
         db.close()
+
+
+if __name__ == "__main__":
+    mcp.run()
