@@ -10,8 +10,10 @@ import {
 // Placeholder for a secret input: shows the masked value + "set" when one is
 // stored, otherwise a neutral hint. The actual secret is never sent to the
 // browser, so an empty field always means "leave unchanged".
-function secretPlaceholder(masked, isSet) {
-  return isSet ? `${masked} — set (leave blank to keep)` : 'not set';
+function secretPlaceholder(masked, isSet, source) {
+  if (!isSet) return 'not set';
+  if (source === 'env') return `${masked} — from environment (.env); saving here overrides`;
+  return `${masked} — set (leave blank to keep)`;
 }
 
 export default function Settings() {
@@ -183,7 +185,7 @@ export default function Settings() {
           <input
             id="llm-key"
             type="password"
-            placeholder={secretPlaceholder(view.llm.api_key_masked, view.llm.api_key_set)}
+            placeholder={secretPlaceholder(view.llm.api_key_masked, view.llm.api_key_set, view.llm.api_key_source)}
             value={llm.api_key}
             disabled={clear.llm}
             onChange={(e) => setLLM({ ...llm, api_key: e.target.value })}
@@ -221,7 +223,7 @@ export default function Settings() {
           <input
             id="bo-token"
             type="password"
-            placeholder={secretPlaceholder(view.bo.inttoken_masked, view.bo.inttoken_set)}
+            placeholder={secretPlaceholder(view.bo.inttoken_masked, view.bo.inttoken_set, view.bo.inttoken_source)}
             value={bo.inttoken}
             disabled={clear.bo}
             onChange={(e) => setBO({ ...bo, inttoken: e.target.value })}
@@ -271,7 +273,7 @@ export default function Settings() {
           <input
             id="jira-token"
             type="password"
-            placeholder={secretPlaceholder(view.jira.api_token_masked, view.jira.api_token_set)}
+            placeholder={secretPlaceholder(view.jira.api_token_masked, view.jira.api_token_set, view.jira.api_token_source)}
             value={jira.api_token}
             disabled={clear.jira}
             onChange={(e) => setJira({ ...jira, api_token: e.target.value })}

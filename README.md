@@ -70,11 +70,20 @@ docker build -t bigi . && docker run --rm -p 8000:8000 -v bigi_data:/data bigi
 # open http://localhost:8000
 ```
 
-Then open **Settings** and enter: BO base URL + INTTOKEN (read-only endpoints
-only), optionally an LLM key (OpenAI/Anthropic; without one, documents are
-filled deterministically) and Jira credentials (fetch/browse). Each section has
-a *Test connection* probe. Secrets are stored in the local SQLite DB and always
-masked (`••••1234`) toward the browser.
+Then configure credentials, either way (the Settings UI wins when both are set):
+
+- **Settings UI**: BO base URL + INTTOKEN (read-only endpoints only), optionally
+  an LLM key (OpenAI/Anthropic; without one, documents are filled
+  deterministically) and Jira credentials (fetch/browse). Each section has a
+  *Test connection* probe. Values are stored in the local SQLite DB.
+- **Environment / `.env` file** (keeps tokens out of the UI, chat, and git):
+  copy `.env.example` to `backend/.env` (gitignored) and fill `BO_BASE_URL`,
+  `BO_INTTOKEN`, `LLM_API_KEY`, … — or pass them to docker:
+  `docker run -e BO_BASE_URL=… -e BO_INTTOKEN=… …`. Env values act as
+  fallbacks whenever the corresponding Settings-UI field is unset; the UI
+  shows *"from environment"* for them.
+
+Secrets are always masked (`••••1234`) toward the browser, whatever the source.
 
 ## Ingestion
 

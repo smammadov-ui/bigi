@@ -1,15 +1,20 @@
-"""DB-backed settings: the only persisted application state.
+"""DB-backed settings with environment fallbacks.
 
 Stores credentials/config as plaintext key/value rows in ``app_settings``.
-Secrets are NEVER returned in plaintext to the browser — ``public_view`` masks
-them; ``get_all`` (and the typed getters) return real values for server-side
-service use only.
+Resolution order per key: **DB (Settings UI) -> environment / ``.env``
+(``config.env_fallbacks``) -> default**. The env path keeps tokens out of the
+browser and out of git — drop them in ``backend/.env`` or pass ``-e`` to
+docker. Secrets are NEVER returned in plaintext to the browser —
+``public_view`` masks them (and reports whether the effective value came from
+the db or the env); ``get_all`` (and the typed getters) return real values for
+server-side service use only.
 """
 from __future__ import annotations
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .config import env_fallbacks
 from .models import AppSetting
 
 # Known keys + their defaults when unset.
@@ -36,19 +41,38 @@ def mask(secret: str) -> str:
 
 
 def get(db: Session, key: str) -> str:
-    """Return the stored value for ``key`` or its default."""
+    """Return the stored value for ``key``, else its env fallback, else default."""
     row = db.get(AppSetting, key)
     if row is not None and row.value != "":
         return row.value
+    env_val = env_fallbacks().get(key, "")
+    if env_val != "":
+        return env_val
     return DEFAULTS.get(key, "")
 
 
+def source_of(db: Session, key: str) -> str:
+    """Where the effective value comes from: "db" | "env" | "default"."""
+    row = db.get(AppSetting, key)
+    if row is not None and row.value != "":
+        return "db"
+    if env_fallbacks().get(key, "") != "":
+        return "env"
+    return "default"
+
+
 def get_all(db: Session) -> dict[str, str]:
-    """INTERNAL: every known key with real values (incl. secrets)."""
+    """INTERNAL: every known key with real values (incl. secrets).
+
+    Resolution per key: DB value -> env fallback -> default.
+    """
     stored = {row.key: row.value for row in db.scalars(select(AppSetting)).all()}
+    env = env_fallbacks()
     out: dict[str, str] = {}
     for key, default in DEFAULTS.items():
         val = stored.get(key, "")
+        if val == "":
+            val = env.get(key, "")
         out[key] = val if val != "" else default
     return out
 
@@ -81,7 +105,11 @@ def update(db: Session, patch: dict) -> None:
 
 
 def public_view(db: Session) -> dict:
-    """Masked, browser-safe view of all settings (no plaintext secrets)."""
+    """Masked, browser-safe view of all settings (no plaintext secrets).
+
+    ``*_source`` reports where the effective secret comes from ("db" | "env" |
+    "default") so the UI can show that a token was supplied via environment.
+    """
     v = get_all(db)
     return {
         "llm": {
@@ -89,17 +117,21 @@ def public_view(db: Session) -> dict:
             "model": v["llm_model"],
             "api_key_masked": mask(v["llm_api_key"]),
             "api_key_set": bool(v["llm_api_key"]),
+            "api_key_source": source_of(db, "llm_api_key"),
         },
         "bo": {
             "base_url": v["bo_base_url"],
             "inttoken_masked": mask(v["bo_inttoken"]),
             "inttoken_set": bool(v["bo_inttoken"]),
+            "inttoken_source": source_of(db, "bo_inttoken"),
+            "base_url_source": source_of(db, "bo_base_url"),
         },
         "jira": {
             "base_url": v["jira_base_url"],
             "email": v["jira_email"],
             "api_token_masked": mask(v["jira_api_token"]),
             "api_token_set": bool(v["jira_api_token"]),
+            "api_token_source": source_of(db, "jira_api_token"),
             "jql": v["jira_jql"],
         },
     }

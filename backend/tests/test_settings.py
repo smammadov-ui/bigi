@@ -149,3 +149,59 @@ def test_test_jira_unconfigured(client):
     r = client.post("/api/settings/test/jira")
     assert r.status_code == 200
     assert r.json()["ok"] is False
+
+
+# --- environment fallbacks ------------------------------------------------------
+
+
+def _clear_settings_cache():
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+
+def test_env_fallback_used_when_db_unset(db, monkeypatch):
+    monkeypatch.setenv("BO_BASE_URL", "https://bo.env.example")
+    monkeypatch.setenv("BO_INTTOKEN", "env-token-1234")
+    _clear_settings_cache()
+    try:
+        cfg = settings_store.bo_config(db)
+        assert cfg["base_url"] == "https://bo.env.example"
+        assert cfg["inttoken"] == "env-token-1234"
+        view = settings_store.public_view(db)
+        assert view["bo"]["inttoken_set"] is True
+        assert view["bo"]["inttoken_source"] == "env"
+        assert view["bo"]["inttoken_masked"] == "••••1234"   # masked, never plaintext
+        assert "env-token-1234" not in str(view)
+    finally:
+        _clear_settings_cache()
+
+
+def test_db_value_overrides_env(db, monkeypatch):
+    monkeypatch.setenv("BO_INTTOKEN", "env-token-1234")
+    _clear_settings_cache()
+    try:
+        settings_store.update(db, {"bo_inttoken": "ui-token-9999"})
+        cfg = settings_store.bo_config(db)
+        assert cfg["inttoken"] == "ui-token-9999"
+        assert settings_store.public_view(db)["bo"]["inttoken_source"] == "db"
+    finally:
+        _clear_settings_cache()
+
+
+def test_no_env_no_db_is_default(db):
+    view = settings_store.public_view(db)
+    assert view["bo"]["inttoken_set"] is False
+    assert view["bo"]["inttoken_source"] == "default"
+
+
+def test_llm_env_fallback(db, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_API_KEY", "sk-ant-env-5678")
+    _clear_settings_cache()
+    try:
+        cfg = settings_store.llm_config(db)
+        assert cfg["provider"] == "anthropic"
+        assert cfg["api_key"] == "sk-ant-env-5678"
+    finally:
+        _clear_settings_cache()

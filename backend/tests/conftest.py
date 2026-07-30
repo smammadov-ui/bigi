@@ -17,11 +17,22 @@ from app.db import SessionLocal, init_db, reset_engine
 from app.main import app
 
 
+_CRED_ENV_VARS = (
+    "LLM_PROVIDER", "LLM_MODEL", "LLM_API_KEY",
+    "BO_BASE_URL", "BO_INTTOKEN",
+    "JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN", "JIRA_JQL",
+)
+
+
 @pytest.fixture()
 def _temp_db(tmp_path, monkeypatch):
     """Point BIGI_DB at a fresh temp file and (re)initialize the engine."""
-    db_path = tmp_path / "mini_test.db"
+    db_path = tmp_path / "bigi_test.db"
     monkeypatch.setenv("BIGI_DB", f"sqlite:///{db_path}")
+    # Credential env fallbacks must not leak from the developer's shell into
+    # the tests — each test starts with a clean environment.
+    for var in _CRED_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
     get_settings.cache_clear()
     reset_engine()
     init_db()
