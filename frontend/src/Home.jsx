@@ -21,7 +21,7 @@ export default function Home() {
 
   // Manual paste box visibility. Operators who work straight from Jira can
   // collapse it to declutter the Input card; the choice persists across cases.
-  const [pasteOpen, setPasteOpen] = useState(true);
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   // Jira browse
   const [browseOpen, setBrowseOpen] = useState(false);
