@@ -1,0 +1,19 @@
+# Keep the build context small and free of dev/local artifacts & secrets.
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.pyc
+**/node_modules/
+**/dist/
+backend/static/
+**/*.db
+**/*.db-journal
+**/*.sqlite
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.DS_Store
+.env
+.env.*
+*.local
+.git/

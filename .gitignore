@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Databases (SQLite)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Node / frontend build
+node_modules/
+dist/
+.vite/
+
+# PyInstaller (desktop sidecar build artifacts)
+build/
+*.spec
+
+# Environment / secrets
+.env
+.env.local
+*.local
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Built SPA served by the backend (produced by the Docker build / npm run build)
+backend/static/
