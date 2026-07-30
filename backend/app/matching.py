@@ -278,6 +278,27 @@ def _pick_search_hit(items: list[dict], kind: str, term: str, full_name: str = "
     return None
 
 
+def _find_by_name(client, full_name: str, exclude_id=None):
+    """Resolve ``full_name`` to a single company via the variant search.
+
+    Returns the item when the name resolves uniquely (one hit, or an exact
+    normalized-name hit among several) to a company other than ``exclude_id``;
+    else None. BO failures resolve to None — the conflict check is advisory.
+    """
+    for term in name_variants(full_name):
+        try:
+            items = client.cstools_search(term).get("items") or []
+        except BOError:
+            return None
+        if not items:
+            continue
+        hit = _pick_search_hit(items, "name", term, full_name=full_name)
+        if hit is not None and (hit.get("id") or "").strip() and hit.get("id") != exclude_id:
+            return hit
+        return None  # ambiguous or same company -> no conflict pair
+    return None
+
+
 def _lookup_name(client, uuid: str) -> str:
     """Best-effort businessName for a known UUID (cstools text search)."""
     try:
@@ -395,6 +416,30 @@ def _identify(client, parsed: dict, manual_uuid: str | None, reasons: list[str])
             continue  # 0 items -> try the next term / variant
         hit = _pick_search_hit(items, kind, term, full_name=full_name)
         if hit is not None and (hit.get("id") or "").strip():
+            # IBAN-vs-name conflict check (live case FPOPCL-14753): a creditor
+            # may quote an IBAN belonging to a SIBLING company (same owner,
+            # different legal entity). When the IBAN hit's business name does
+            # not match the ticket's debtor name AND the debtor name resolves
+            # to a DIFFERENT company, the debtor's legal identity is ambiguous
+            # -> the operator picks; never guess between legal entities.
+            if kind == "iban" and full_name and not _same_name(hit.get("businessName"), full_name):
+                conflict = _find_by_name(client, full_name, exclude_id=hit.get("id"))
+                if conflict is not None:
+                    reasons.append(
+                        "seized IBAN belongs to a different legal entity than the "
+                        "ticket's debtor name — operator must pick the debtor")
+                    return {
+                        "company_uuid": "",
+                        "candidates": [_candidate(hit), _candidate(conflict)],
+                        "needs_selection": True,
+                        "error": (
+                            f"the seized IBAN belongs to {hit.get('businessName', '?')!r}, "
+                            f"but the ticket names {full_name!r} as the debtor — "
+                            "pick the company the seizure is legally directed at"),
+                    }
+                reasons.append(
+                    f"seized IBAN's account name {hit.get('businessName', '?')!r} does not "
+                    "match the ticket's debtor name — verify the debtor entity")
             name_exact = kind == "name" and _same_name(hit.get("businessName"), full_name)
             reasons.append(
                 f"identified via cstools_search by {kind}"

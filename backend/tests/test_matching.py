@@ -312,3 +312,81 @@ def test_name_variant_multiple_hits_exact_name_wins():
     out = match_account(stub, f)
     assert out["company_uuid"] == UUID
     assert any("full name equality" in r for r in out["reasons"])
+
+
+# --- IBAN-vs-name conflict (FPOPCL-14753: two sibling legal entities) --------------
+
+
+UUID_SOLAR = "5a40c513-0000-0000-0000-000000000001"
+
+
+def _sibling_fixtures():
+    """Debtor named 'BS Service GmbH & Co. KG' (application in progress) while
+    the ticket's IBAN belongs to sibling 'Solar Solution GmbH & Co. KG'."""
+    named = company(uuid=UUID, name="BS Service GmbH & Co. KG",
+                    status="ApplicationInProgress", wallets=[])
+    named["overview"] = {}
+    named["cdd"] = {}
+    named["short_info"] = {"id": UUID, "businessName": "BS Service GmbH & Co. KG",
+                           "status": {"accountStatus": "ApplicationInProgress"}}
+    sibling = company(uuid=UUID_SOLAR, name="Solar Solution GmbH & Co. KG",
+                      status="AccountBlocked")
+    sibling["search_items"][0]["iban"] = IBAN
+    return named, sibling
+
+
+def test_iban_name_conflict_surfaces_both_candidates():
+    named, sibling = _sibling_fixtures()
+    stub = StubBO(
+        fixtures={UUID: named, UUID_SOLAR: sibling},
+        search_items_map={
+            IBAN: sibling["search_items"],
+            "BS Service GmbH & Co. KG": named["search_items"],
+        },
+    )
+    f = fields(company_uuid="", debtor_register_number="",
+               debtor_name="BS Service GmbH & Co. KG")
+    out = match_account(stub, f)
+    assert out["needs_selection"] is True
+    assert out["outcome"] is None
+    ids = [c["id"] for c in out["candidates"]]
+    assert UUID_SOLAR in ids and UUID in ids
+    assert "different legal entity" in " ".join(out["reasons"]) or "belongs to" in (out["error"] or "")
+
+
+def test_iban_name_conflict_operator_pick_resolves_s3():
+    named, sibling = _sibling_fixtures()
+    stub = StubBO(
+        fixtures={UUID: named, UUID_SOLAR: sibling},
+        search_items_map={
+            IBAN: sibling["search_items"],
+            "BS Service GmbH & Co. KG": named["search_items"],
+        },
+    )
+    f = fields(company_uuid="", debtor_register_number="",
+               debtor_name="BS Service GmbH & Co. KG")
+    # Operator picks the NAMED debtor -> onboarding -> S3 territory.
+    out = match_account(stub, f, manual_uuid=UUID)
+    assert out["outcome"] == "MATCH"          # strong identity, no comparable data
+    assert out["status_bucket"] == "ONBOARDING"
+
+
+def test_iban_hit_with_matching_name_unaffected():
+    # Normal case: the IBAN's account carries the debtor's name -> no conflict.
+    stub = StubBO(fixtures={UUID: company()}, search_map={IBAN: UUID})
+    f = fields(company_uuid="", debtor_register_number="")
+    out = match_account(stub, f)
+    assert out["company_uuid"] == UUID
+    assert out["identified_by"] == "iban"
+    assert out["needs_selection"] is False
+
+
+def test_iban_name_mismatch_without_name_hit_proceeds_with_warning():
+    # The debtor name resolves nowhere else -> keep the IBAN company but warn.
+    sibling = company(uuid=UUID, name="Solar Solution GmbH & Co. KG")
+    stub = StubBO(fixtures={UUID: sibling}, search_map={IBAN: UUID})
+    f = fields(company_uuid="", debtor_register_number="",
+               debtor_name="BS Service GmbH & Co. KG")
+    out = match_account(stub, f)
+    assert out["company_uuid"] == UUID
+    assert any("does not match the ticket's debtor name" in r for r in out["reasons"])
