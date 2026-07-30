@@ -145,3 +145,40 @@ def jira_issue(issue_key: str) -> dict:
 
 if __name__ == "__main__":
     mcp.run()
+
+
+@mcp.tool()
+def case_trace(issue_key: str, company_uuid: str = "", use_llm: bool = False) -> dict:
+    """Fetch a Jira ticket and run bigi's FULL read-only pipeline on it
+    (parse -> identify -> confirm -> alerts -> seizures -> balance -> scenario
+    -> document). Returns the decision trace incl. the composed German
+    document. ``company_uuid`` re-runs with an operator-picked account;
+    ``use_llm=False`` forces the deterministic composer (fast, stable)."""
+    from app.db import SessionLocal, init_db
+    from app.jira import fetch_issue
+    from app.pipeline import run_pipeline
+    from app.settings_store import jira_config
+    from app.trace import build_trace
+
+    init_db()
+    db = SessionLocal()
+    try:
+        issue = fetch_issue(jira_config(db), issue_key)
+        if not use_llm:
+            # Force deterministic compose by masking the LLM key for this run.
+            from app import pipeline as _p
+            real = _p.llm_config
+            _p.llm_config = lambda _db: {"provider": "openai", "model": "", "api_key": ""}
+            try:
+                result = run_pipeline(db, issue["description"], company_uuid or None)
+            finally:
+                _p.llm_config = real
+        else:
+            result = run_pipeline(db, issue["description"], company_uuid or None)
+        trace = build_trace(result, include_document=True)
+        trace["jira"] = {"key": issue["key"], "summary": issue["summary"]}
+        return trace
+    except Exception as exc:  # noqa: BLE001 — surface, never crash the server
+        return {"error": True, "detail": f"{type(exc).__name__}: {str(exc)[:800]}"}
+    finally:
+        db.close()
