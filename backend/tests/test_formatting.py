@@ -125,3 +125,20 @@ def test_de_date_empty_and_default():
 def test_de_date_epoch_seconds():
     # 2021-01-01T00:00:00Z
     assert de_date(1609459200) == "01.01.2021"
+
+
+def test_iso_date_any_epoch_and_strings():
+    from app.formatting import iso_date_any
+
+    assert iso_date_any(1769904000000) == "2026-02-01"   # epoch ms (real BO)
+    assert iso_date_any(1769904000) == "2026-02-01"      # epoch seconds
+    assert iso_date_any("1769904000000") == "2026-02-01"
+    assert iso_date_any("2026-03-01T00:00:00Z") == "2026-03-01"
+    assert iso_date_any("05.03.2026") == "2026-03-05"
+    assert iso_date_any("") == "" and iso_date_any(None) == ""
+    assert iso_date_any("garbage") == ""
+
+
+def test_de_date_epoch_milliseconds():
+    assert de_date(1769904000000) == "01.02.2026"
+    assert de_date(1769904000) == "01.02.2026"

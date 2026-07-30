@@ -248,3 +248,19 @@ def test_scenario_template_map_is_total():
     from app.schemas import SCENARIOS
     from app.templates import SCENARIO_TEMPLATE
     assert set(SCENARIO_TEMPLATE) == set(SCENARIOS)
+
+
+def test_closed_account_with_epoch_status_date(monkeypatch, db, client):
+    # Real BO regression (FPOPCL ticket): epoch-ms accountStatusUpdated on a
+    # CLOSED account crashed the resolver. Closed 2026-01-05 < received
+    # 2026-02-01 -> S3.
+    fx = company(status="AccountClosed", updated=1767571200000)  # 2026-01-05
+    r = run(monkeypatch, db, fx)
+    assert r["scenario"] == "S3"
+    assert r["declaration"]["template"] == "T6"
+
+
+def test_closed_after_ticket_with_epoch_date_routes_out(monkeypatch, db, client):
+    fx = company(status="AccountClosed", updated=1772323200000)  # 2026-03-01
+    r = run(monkeypatch, db, fx)   # received 2026-02-01
+    assert r["scenario"] == "ROUTED_OUT"

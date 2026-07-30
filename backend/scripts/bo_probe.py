@@ -59,6 +59,9 @@ def main() -> int:
                 check("item has businessName", "businessName" in it)
                 check("item has accountStatus", "accountStatus" in it)
                 check("item has accountStatusUpdated", "accountStatusUpdated" in it)
+                asu = it.get("accountStatusUpdated")
+                from app.formatting import iso_date_any
+                print(f"    accountStatusUpdated type: {type(asu).__name__} -> normalized: {iso_date_any(asu) or '(unparseable)'}")
                 check("item has type (Company/Freelancer)", "type" in it)
                 check("item has regNumber", "regNumber" in it)
                 uuid = str(it.get("id") or "")

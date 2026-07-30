@@ -34,6 +34,7 @@ from __future__ import annotations
 import re
 
 from .bo_client import BOError
+from .formatting import iso_date_any
 from .schemas import AccountStatusBucket, MatchOutcome
 
 # Step 2 — accountStatus -> bucket (CHECKS_ALGORITHM.md Step 2)
@@ -388,7 +389,10 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
         reasons.append(f"cdd-profile unavailable ({exc.status_code or 'transport'})")
 
     account_status = item.get("accountStatus", "") if isinstance(item, dict) else ""
-    account_status_updated = item.get("accountStatusUpdated", "") if isinstance(item, dict) else ""
+    # Real BO returns accountStatusUpdated as an EPOCH INTEGER (ms); normalize
+    # every representation to an ISO date so downstream slicing/compares hold.
+    account_status_updated = iso_date_any(
+        item.get("accountStatusUpdated", "") if isinstance(item, dict) else "")
     account_type = overview.get("type") or (item.get("type") if isinstance(item, dict) else "") or ""
     business_name = ((item.get("businessName") if isinstance(item, dict) else "")
                      or ident.get("business_name") or "")
@@ -406,7 +410,7 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
             s_items = client.cstools_search(term).get("items") or []
             enriched = next((it for it in s_items if it.get("id") == company_uuid), None)
             if enriched and enriched.get("accountStatusUpdated"):
-                account_status_updated = enriched["accountStatusUpdated"]
+                account_status_updated = iso_date_any(enriched["accountStatusUpdated"])
                 reasons.append("accountStatusUpdated enriched via cstools_search (closed account)")
         except BOError:
             reasons.append("accountStatusUpdated unavailable — closed account treated as closed-before-ticket")

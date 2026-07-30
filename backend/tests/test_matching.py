@@ -145,7 +145,7 @@ def test_closed_account_status_updated_enriched_via_search():
     stub = StubBO(fixtures={UUID: fx}, search_map={IBAN: UUID})
     out = match_account(stub, fields())
     assert out["status_bucket"] == "CLOSED"
-    assert out["account_status_updated"] == "2026-03-01T00:00:00Z"
+    assert out["account_status_updated"] == "2026-03-01"   # normalized to ISO date
     assert any("enriched via cstools_search" in r for r in out["reasons"])
 
 
@@ -166,3 +166,12 @@ def test_closed_account_enrichment_failure_degrades_gracefully():
     out = match_account(SearchFailsAfterIdentify(fixtures={UUID: fx}), fields())
     assert out["account_status_updated"] == ""
     assert any("closed-before-ticket" in r for r in out["reasons"])
+
+
+def test_epoch_account_status_updated_normalized():
+    # Real BO: accountStatusUpdated is an epoch-ms INTEGER. It must normalize
+    # to an ISO date and never crash the closed-before/after slice.
+    fx = company(status="AccountClosed", updated=1769904000000)  # 2026-02-01
+    out = match_account(StubBO(fixtures={UUID: fx}, search_map={IBAN: UUID}), fields())
+    assert out["account_status_updated"] == "2026-02-01"
+    assert out["status_bucket"] == "CLOSED"

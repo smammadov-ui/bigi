@@ -86,8 +86,10 @@ def resolve_scenario(match: dict, checks: dict, parsed: dict) -> tuple[str, list
     if bucket == AccountStatusBucket.CLOSED.value:
         # Only "closed BEFORE the ticket" is S3; closed on/after the receipt
         # date needs manual handling. ISO dates compare lexically.
-        closed = (match.get("account_status_updated") or "")[:10]
-        received = (parsed.get("date_received") or "")[:10]
+        # Defensive: the date is normalized to ISO upstream, but never crash a
+        # live case on an unexpected type (real BO sent an epoch int here once).
+        closed = str(match.get("account_status_updated") or "")[:10]
+        received = str(parsed.get("date_received") or "")[:10]
         if closed and received and closed >= received:
             notes.append("account closed on/after the ticket receipt date")
             return Scenario.ROUTED_OUT.value, notes
