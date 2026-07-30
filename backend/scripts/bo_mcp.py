@@ -180,5 +180,76 @@ def case_trace(issue_key: str, company_uuid: str = "", use_llm: bool = False) ->
         db.close()
 
 
+@mcp.tool()
+def bo_get(path: str, max_chars: int = 20000) -> dict:
+    """READ-ONLY generic GET against the BO base URL (endpoint discovery /
+    swagger probing). ``path`` must start with '/' — the host is always the
+    configured BO_BASE_URL, so this can never reach other hosts. Returns
+    ``{status_code, json|text}`` truncated to ``max_chars``."""
+    import httpx
+
+    from app.config import get_settings
+
+    if not str(path or "").startswith("/"):
+        return {"error": True, "detail": "path must start with '/'"}
+    s = get_settings()
+    if not s.bo_base_url or not s.bo_inttoken:
+        return {"error": True, "detail": "BO_BASE_URL / BO_INTTOKEN not configured"}
+    url = s.bo_base_url.rstrip("/") + path
+    try:
+        resp = httpx.get(url, headers={"Cookie": f"INTTOKEN={s.bo_inttoken}",
+                                       "sensitive-data": "true"}, timeout=30.0)
+    except httpx.HTTPError as exc:
+        return {"error": True, "detail": f"{type(exc).__name__}: {str(exc)[:300]}"}
+    out: dict = {"status_code": resp.status_code}
+    body = resp.text or ""
+    try:
+        out["json"] = resp.json()
+        import json as _json
+        blob = _json.dumps(out["json"], ensure_ascii=False)
+        if len(blob) > max_chars:
+            out.pop("json")
+            out["text"] = blob[:max_chars]
+            out["truncated"] = True
+    except ValueError:
+        out["text"] = body[:max_chars]
+        out["truncated"] = len(body) > max_chars
+    return out
+
+
+@mcp.tool()
+def bo_openapi(path: str) -> dict:
+    """Fetch an OpenAPI/Swagger document from BO (e.g.
+    '/api/cstools/swagger/v1/swagger.json') and return a CONDENSED endpoint
+    catalog: one '<METHOD> <path> — <summary>' line per operation, grouped by
+    tag, plus the info block. Keeps huge specs readable."""
+    raw = bo_get(path, max_chars=10)  # probe status first (cheap truncation)
+    if raw.get("error"):
+        return raw
+    full = bo_get(path, max_chars=2_000_000)
+    spec = full.get("json")
+    if not isinstance(spec, dict) or "paths" not in spec:
+        return {"status_code": full.get("status_code"),
+                "detail": "no OpenAPI 'paths' found",
+                "preview": (full.get("text") or "")[:500]}
+    by_tag: dict[str, list[str]] = {}
+    for p_, ops in (spec.get("paths") or {}).items():
+        if not isinstance(ops, dict):
+            continue
+        for method, op in ops.items():
+            if method.upper() not in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"):
+                continue
+            op = op if isinstance(op, dict) else {}
+            tag = (op.get("tags") or ["(untagged)"])[0]
+            summary = op.get("summary") or op.get("operationId") or ""
+            by_tag.setdefault(tag, []).append(f"{method.upper()} {p_}" + (f" — {summary}" if summary else ""))
+    return {
+        "status_code": full.get("status_code"),
+        "info": spec.get("info"),
+        "operation_count": sum(len(v) for v in by_tag.values()),
+        "endpoints_by_tag": {k: sorted(v) for k, v in sorted(by_tag.items())},
+    }
+
+
 if __name__ == "__main__":
     mcp.run()
