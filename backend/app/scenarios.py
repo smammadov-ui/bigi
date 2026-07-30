@@ -94,12 +94,24 @@ def resolve_scenario(match: dict, checks: dict, parsed: dict) -> tuple[str, list
             notes.append("account closed on/after the ticket receipt date")
             return Scenario.ROUTED_OUT.value, notes
         return Scenario.S3.value, notes
-    if bucket == AccountStatusBucket.RESTRICTED.value:
-        notes.append(f"restricted account status {match.get('account_status')!r}")
-        return Scenario.ROUTED_OUT.value, notes
-
     processing_count = int(seizure_check.get("processing_count") or 0)
     seizures_assumed = bool(seizure_check.get("assumed"))
+    own_case_present = bool(seizure_check.get("ignored_same_case"))
+
+    if bucket == AccountStatusBucket.RESTRICTED.value:
+        status = match.get("account_status") or ""
+        # Per the ops SOP, an account under an active seizure stays BLOCKED
+        # until the seizure resolves — so AccountBlocked with VERIFIED seizure
+        # activity (this ticket's own case or a competing Processing seizure)
+        # is the normal state of a seizure in progress, not a reason to stop.
+        seizure_activity = (not seizures_assumed) and (processing_count > 0 or own_case_present)
+        if status == "AccountBlocked" and seizure_activity:
+            notes.append(
+                "account is AccountBlocked with active seizure(s) — per SOP the "
+                "account stays blocked until the seizure resolves; proceeding with the TPD")
+        else:
+            notes.append(f"restricted account status {status!r}")
+            return Scenario.ROUTED_OUT.value, notes
 
     if bucket == AccountStatusBucket.CLOSING.value:
         available = balance.get("available_eur")

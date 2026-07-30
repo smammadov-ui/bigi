@@ -401,3 +401,46 @@ def test_s5_freelancer_lookup_offers_candidates(monkeypatch, db, client):
     assert r["status"] == "pending_selection"
     ids = [c["id"] for c in r["account"]["candidates"]]
     assert UUID2 in ids and UUID in ids            # freelancer + the company
+
+
+# --- seizure-aware AccountBlocked handling (ops SOP: blocked until resolved) -------
+
+
+def test_blocked_with_own_case_proceeds_s1(monkeypatch, db, client):
+    # Guide case 1 drift (FPOPCL-24373): blocked BECAUSE the seizure executed.
+    fx = company(status="AccountBlocked", seizures=[OWN],
+                 details={9: {**OWN, "seizedAmount": 360.16}})
+    r = run(monkeypatch, db, fx)
+    assert r["scenario"] == "S1"
+    assert "360,16 EUR" in r["declaration"]["text"]
+    assert any("stays blocked until the seizure resolves" in n for n in r["plan"]["notes"])
+
+
+def test_blocked_with_competing_processing_is_s2(monkeypatch, db, client):
+    det = {1: {**PRIOR, "issuedBy": "Finanzamt Leipzig II", "amount": 900.5}}
+    fx = company(status="AccountBlocked", seizures=[PRIOR], details=det)
+    r = run(monkeypatch, db, fx)
+    assert r["scenario"] == "S2"
+    assert r["declaration"]["template"] == "T2"
+
+
+def test_blocked_without_seizures_still_routes_out(monkeypatch, db, client):
+    # Compliance-blocked (FPOPCL-14753's sibling): no seizure activity -> operator.
+    r = run(monkeypatch, db, company(status="AccountBlocked"))
+    assert r["scenario"] == "ROUTED_OUT"
+    assert any("restricted" in n.lower() for n in r["plan"]["notes"])
+
+
+def test_blocked_with_assumed_seizures_routes_out(monkeypatch, db, client):
+    stub = StubBO(fixtures={UUID: company(status="AccountBlocked")},
+                  fail={"list_seizures"})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    r = pipeline.run_pipeline(db, raw_ticket())
+    assert r["scenario"] == "ROUTED_OUT"
+
+
+def test_limited_account_always_routes_out(monkeypatch, db, client):
+    fx = company(status="LimitedAccount", seizures=[OWN],
+                 details={9: {**OWN, "seizedAmount": 1.0}})
+    r = run(monkeypatch, db, fx)
+    assert r["scenario"] == "ROUTED_OUT"
