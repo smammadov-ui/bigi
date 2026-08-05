@@ -1,0 +1,75 @@
+# Build the bigi Windows installer (.exe) on a Windows runner and
+# upload it as a downloadable artifact. Mirrors desktop/build-windows.ps1.
+#
+# Trigger it from GitHub → Actions → "Build Windows installer" → Run workflow,
+# then download the artifact from the run's summary page.
+name: Build Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      # Each build command gets its own step: GitHub's pwsh steps only
+      # propagate the LAST command's exit code, so multi-command blocks would
+      # mask failures (e.g. a failed pip install then a "green" pyinstaller).
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend SPA
+        working-directory: frontend
+        run: npm run build
+
+      - name: Install Python deps
+        working-directory: backend
+        run: pip install -r requirements.txt "pyinstaller>=6.11"
+
+      - name: Build Python sidecar (PyInstaller, onedir)
+        working-directory: backend
+        run: |
+          pyinstaller --noconfirm --onedir --name bigi-server `
+            --collect-submodules uvicorn --collect-submodules anyio `
+            --collect-submodules app `
+            --collect-all pydantic --collect-all pydantic_core `
+            --add-data "..\frontend\dist;static" `
+            desktop_main.py
+
+      - name: Stage sidecar into Tauri resources
+        run: |
+          New-Item -ItemType Directory -Force -Path desktop\src-tauri\resources | Out-Null
+          Copy-Item -Recurse backend\dist\bigi-server desktop\src-tauri\resources\bigi-server
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Tauri build (NSIS installer)
+        working-directory: desktop
+        run: npx tauri build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bigi-windows-setup
+          path: desktop/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error

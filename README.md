@@ -63,6 +63,19 @@ cd backend && python3 -m venv .venv && . .venv/bin/activate \
 cd frontend && npm install && npm run dev                               # :5173 (proxies to :8000)
 ```
 
+Desktop app (Mac `.app`/`.dmg`, Windows NSIS installer — Tauri 2 shell with the
+backend bundled as a PyInstaller sidecar; DB lives in the OS per-user app-data dir):
+
+```bash
+cd backend && .venv/bin/pip install "pyinstaller>=6.11"   # one-time
+cd ../desktop && ./build-mac.sh                            # on macOS -> .app + .dmg
+# on Windows: powershell -ExecutionPolicy Bypass -File .\build-windows.ps1
+# or CI: .github/workflows/build-windows.yml (needs a GitHub remote)
+```
+
+Builds do not cross-compile. The macOS app is ad-hoc signed — after copying to
+/Applications run once: `xattr -dr com.apple.quarantine "/Applications/bigi.app"`.
+
 Docker (single container, SPA served by the backend):
 
 ```bash
