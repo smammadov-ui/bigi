@@ -113,7 +113,8 @@ no BO call is made).
 
 ## BO endpoints used (all read-only)
 
-`cstools_search`, `cstools_short_info`, `cstools_overview`, `cdd_profile`,
+`cstools_search` (v3 — the portal's fast global search, v2 fallback),
+`cstools_short_info`, `cstools_overview`, `cdd_profile`,
 `wallets` (debt/on-hold-excluding flags), `get_alerts`, `list_seizures`
 (paginated — competing seizures beyond page 1 are never lost), `get_seizure`,
 `whoami`. The INTTOKEN travels only as a `Cookie: INTTOKEN=…` header and is

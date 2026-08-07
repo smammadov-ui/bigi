@@ -104,7 +104,28 @@ class BOClient:
     # -- identification / account ------------------------------------------
 
     def cstools_search(self, text: str) -> dict:
-        """POST ``/api/cstools/v2/companies`` -> ``{"items": [...], ...}``."""
+        """Company search -> ``{"items": [...], ...}``.
+
+        Uses ``POST /api/cstools/v3/companies`` — the portal's global-search
+        ("boogle") endpoint: fuzzy, extracts strong identifiers (company GUID /
+        checksum-valid IBAN) from pasted text, and answers in milliseconds
+        where the old v2 strict search routinely hit 30s read timeouts.
+        Response is shape-compatible with v2 (``items[]`` with id /
+        businessName / regNumber / accountStatus / accountStatusUpdated /
+        type) plus ``hasMore``. Falls back to v2 once per client instance if
+        v3 is not deployed on the target host (404/405/501).
+        """
+        if not getattr(self, "_search_v2_only", False):
+            try:
+                return self._post(
+                    "cstools_search",
+                    "/api/cstools/v3/companies",
+                    {"text": text, "page": 1, "pageSize": 50},
+                )
+            except BOError as exc:
+                if exc.status_code not in (404, 405, 501):
+                    raise
+                self._search_v2_only = True  # v3 missing here — stop retrying it
         return self._post(
             "cstools_search",
             "/api/cstools/v2/companies",

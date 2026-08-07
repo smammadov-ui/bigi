@@ -20,7 +20,7 @@
 
 | Endpoint | Service | Used for |
 |---|---|---|
-| `POST /api/cstools/v2/companies` | cstools | search by IBAN / name / register number |
+| `POST /api/cstools/v3/companies` | cstools | search by IBAN / name / register number ("boogle" — the portal's fuzzy global search: strong-identifier extraction, `hasMore` paging; ms-fast where v2 hit 30s ReadTimeouts; v2 kept as fallback) |
 | `GET /api/cstools/companies/{id}/short-info` | cstools | account/payment status |
 | `GET /api/cstools/companies/{id}/overview` | cstools | type, address, legal form |
 | `GET /api/customerdossier/companies/{id}/cdd-profile` | customerdossier | PersonBirthdate (Freelancer rule) |

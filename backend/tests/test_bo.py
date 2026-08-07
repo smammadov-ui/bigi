@@ -55,7 +55,8 @@ def test_cstools_search_sends_cookie_url_body(monkeypatch):
     out = client.cstools_search("acme")
 
     assert out == {"items": [{"id": "u1"}]}
-    assert captured["url"] == "https://bo.example.com/api/cstools/v2/companies"
+    # v3 = the portal's global-search ("boogle") endpoint — fast fuzzy search.
+    assert captured["url"] == "https://bo.example.com/api/cstools/v3/companies"
     assert captured["json"] == {"text": "acme", "page": 1, "pageSize": 50}
     assert captured["headers"]["Cookie"] == "INTTOKEN=SECRET-TOKEN"
     assert captured["headers"]["Content-Type"] == "application/json"
@@ -264,3 +265,32 @@ def test_whoami_and_user_context_urls(monkeypatch):
     assert calls[0][:2] == ("GET", "https://bo.example/api/cstools/whoami")
     assert calls[1][:2] == ("POST", "https://bo.example/api/cstools/user-context/set")
     assert calls[1][2] == {"userContexts": ["FinomPayments", "PnlFintech"]}
+
+
+def test_cstools_search_falls_back_to_v2_once(monkeypatch):
+    urls = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        urls.append(url)
+        if "/v3/" in url:
+            return _FakeResp(404, {})
+        return _FakeResp(200, {"items": []})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = BOClient("https://bo.example.com", "tok")
+    client.cstools_search("a")
+    client.cstools_search("b")   # second call: v3 not retried
+    assert urls == [
+        "https://bo.example.com/api/cstools/v3/companies",
+        "https://bo.example.com/api/cstools/v2/companies",
+        "https://bo.example.com/api/cstools/v2/companies",
+    ]
+
+
+def test_cstools_search_v3_server_error_propagates(monkeypatch):
+    def fake_post(url, json=None, headers=None, timeout=None):
+        return _FakeResp(500, {})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    with pytest.raises(BOError):
+        BOClient("https://bo.example.com", "tok").cstools_search("a")
