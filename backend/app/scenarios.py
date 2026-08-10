@@ -63,14 +63,21 @@ def resolve_scenario(match: dict, checks: dict, parsed: dict) -> tuple[str, list
     seizure_check = checks.get("seizures") or {}
     balance = checks.get("balance") or {}
 
-    # Step 3 — open-alert branches first
+    # Step 3 — open-alert branches first. Ops policy: ONLY the seizure-family
+    # rules drive decisions (MNL-20-FP seizure mechanism / MNL-21-FP insolvency
+    # / MNL-22-FP RFI, canonicalized to MNL20/21/22). Any other open alert
+    # (FCRM/TM/SNC/...) is unrelated monitoring work — surfaced as a note,
+    # never a reason to stop the seizure flow.
     rules = set(alerts.get("open_rules") or [])
     if "MNL21" in rules:
         return Scenario.INSOLVENCY.value, notes
     if "MNL22" in rules:
         return Scenario.RFI.value, notes
-    if rules - {"MNL20", "MNL21", "MNL22"}:
-        return Scenario.ROUTED_OUT.value, notes  # other open alert -> operator review
+    other_open = sorted(rules - {"MNL20", "MNL21", "MNL22"})
+    if other_open:
+        notes.append(
+            "open non-seizure alert(s) on the account (ignored per ops policy): "
+            + ", ".join(other_open))
 
     outcome = match.get("outcome")
     if outcome == MatchOutcome.PERSON_VS_COMPANY.value:
@@ -100,15 +107,18 @@ def resolve_scenario(match: dict, checks: dict, parsed: dict) -> tuple[str, list
 
     if bucket == AccountStatusBucket.RESTRICTED.value:
         status = match.get("account_status") or ""
-        # Per the ops SOP, an account under an active seizure stays BLOCKED
-        # until the seizure resolves — so AccountBlocked with VERIFIED seizure
-        # activity (this ticket's own case or a competing Processing seizure)
-        # is the normal state of a seizure in progress, not a reason to stop.
+        # Per the ops SOP, an account under an active seizure stays BLOCKED/
+        # LIMITED until the seizure resolves — so a restricted status with
+        # VERIFIED seizure activity (this ticket's own case or a competing
+        # Processing seizure) is the normal state of a seizure in progress,
+        # not a reason to stop (live anchor: FPOPCL-31056, LimitedAccount with
+        # 2 Processing seizures). Restricted WITHOUT seizure activity (e.g. a
+        # compliance block) still goes to the operator.
         seizure_activity = (not seizures_assumed) and (processing_count > 0 or own_case_present)
-        if status == "AccountBlocked" and seizure_activity:
+        if status in ("AccountBlocked", "LimitedAccount") and seizure_activity:
             notes.append(
-                "account is AccountBlocked with active seizure(s) — per SOP the "
-                "account stays blocked until the seizure resolves; proceeding with the TPD")
+                f"account is {status} with active seizure(s) — per SOP it stays "
+                "restricted until the seizure resolves; proceeding with the TPD")
         else:
             notes.append(f"restricted account status {status!r}")
             return Scenario.ROUTED_OUT.value, notes

@@ -228,11 +228,14 @@ def test_resolved_alert_does_not_branch(monkeypatch, db, client):
     assert r["scenario"] == "S1"
 
 
-def test_other_open_alert_routes_out(monkeypatch, db, client):
-    fx = company(alerts=[{"rules": ["MNL9"], "resolvedOn": None}])
+def test_other_open_alert_is_note_not_blocker(monkeypatch, db, client):
+    # Ops policy: only MNL-20/21/22 drive decisions; FCRM/TM/SNC alerts are
+    # unrelated monitoring work (live anchor: FPOPCL-31056, 'FCRM FP-2 PROD').
+    fx = company(alerts=[{"rules": ["FCRM FP-2 PROD"], "resolvedOn": None}])
     r = run(monkeypatch, db, fx)
-    assert r["scenario"] == "ROUTED_OUT"
-    assert r["declaration"] is None
+    assert r["scenario"] == "S1"
+    assert any("ignored per ops policy" in n for n in r["plan"]["notes"])
+    assert r["declaration"]["template"] == "T1"
 
 
 def test_restricted_account_routes_out(monkeypatch, db, client):
@@ -413,7 +416,7 @@ def test_blocked_with_own_case_proceeds_s1(monkeypatch, db, client):
     r = run(monkeypatch, db, fx)
     assert r["scenario"] == "S1"
     assert "360,16 EUR" in r["declaration"]["text"]
-    assert any("stays blocked until the seizure resolves" in n for n in r["plan"]["notes"])
+    assert any("stays restricted until the seizure resolves" in n for n in r["plan"]["notes"])
 
 
 def test_blocked_with_competing_processing_is_s2(monkeypatch, db, client):
@@ -439,11 +442,30 @@ def test_blocked_with_assumed_seizures_routes_out(monkeypatch, db, client):
     assert r["scenario"] == "ROUTED_OUT"
 
 
-def test_limited_account_always_routes_out(monkeypatch, db, client):
+def test_limited_account_with_seizures_proceeds(monkeypatch, db, client):
     fx = company(status="LimitedAccount", seizures=[OWN],
                  details={9: {**OWN, "seizedAmount": 1.0}})
     r = run(monkeypatch, db, fx)
+    assert r["scenario"] == "S1"
+    assert any("LimitedAccount with active seizure" in n for n in r["plan"]["notes"])
+
+
+def test_limited_account_without_seizures_routes_out(monkeypatch, db, client):
+    r = run(monkeypatch, db, company(status="LimitedAccount"))
     assert r["scenario"] == "ROUTED_OUT"
+
+
+def test_fpopcl31056_shape_limited_plus_fcrm_alert_is_s2(monkeypatch, db, client):
+    det = {1: {**PRIOR, "issuedBy": "Finanzamt Leipzig II", "amount": 900.5,
+               "seizedAmount": 600.0},
+           9: {**OWN, "seizedAmount": 65.88}}
+    fx = company(status="LimitedAccount", seizures=[PRIOR, OWN], details=det,
+                 alerts=[{"rules": ["FCRM FP-2 PROD"], "resolvedOn": None}])
+    r = run(monkeypatch, db, fx)
+    assert r["scenario"] == "S2"
+    assert r["declaration"]["template"] == "T2"
+    notes = " | ".join(r["plan"]["notes"])
+    assert "ignored per ops policy" in notes and "LimitedAccount with active seizure" in notes
 
 
 # --- Repeal / Restriction documents (ops SOP Step 5) -------------------------------
