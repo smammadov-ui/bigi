@@ -19,7 +19,7 @@ from app.main import app
 
 _CRED_ENV_VARS = (
     "LLM_PROVIDER", "LLM_MODEL", "LLM_API_KEY",
-    "BO_BASE_URL", "BO_INTTOKEN",
+    "BO_BASE_URL", "BO_INTTOKEN", "BO_INTTOKEN_FILE",
     "JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN", "JIRA_JQL",
 )
 

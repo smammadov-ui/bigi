@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     jira_webhook_secret: str = ""  # optional; when set, webhook requires it
 
     # --- credential fallbacks (Settings UI wins when set) -------------------
+    # When BO_INTTOKEN itself is unset, the token is read from this file on
+    # EVERY request (fresh reads — refreshing the file needs no restart). It is
+    # the same file the finom-bo-local MCP server uses, so the token is
+    # maintained in exactly one place.
+    bo_inttoken_file: str = "~/.finom-bo/token"
+
     llm_provider: str = ""         # openai | anthropic
     llm_model: str = ""
     llm_api_key: str = ""
@@ -48,15 +54,31 @@ def get_settings() -> Settings:
     return Settings()
 
 
+def _token_from_file(path: str) -> str:
+    """Best-effort token read (expanded path, stripped); '' when unavailable."""
+    if not path:
+        return ""
+    try:
+        from pathlib import Path
+
+        return Path(path).expanduser().read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def env_fallbacks() -> dict[str, str]:
-    """The credential fallback map, keyed like ``settings_store.DEFAULTS``."""
+    """The credential fallback map, keyed like ``settings_store.DEFAULTS``.
+
+    ``bo_inttoken`` resolution: env/.env value first, else the token FILE
+    (read per call, so a refreshed file takes effect immediately).
+    """
     s = get_settings()
     return {
         "llm_provider": s.llm_provider,
         "llm_model": s.llm_model,
         "llm_api_key": s.llm_api_key,
         "bo_base_url": s.bo_base_url,
-        "bo_inttoken": s.bo_inttoken,
+        "bo_inttoken": s.bo_inttoken or _token_from_file(s.bo_inttoken_file),
         "jira_base_url": s.jira_base_url,
         "jira_email": s.jira_email,
         "jira_api_token": s.jira_api_token,

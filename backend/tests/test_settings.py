@@ -205,3 +205,42 @@ def test_llm_env_fallback(db, monkeypatch):
         assert cfg["api_key"] == "sk-ant-env-5678"
     finally:
         _clear_settings_cache()
+
+
+def test_bo_token_file_fallback(db, monkeypatch, tmp_path):
+    token_file = tmp_path / "token"
+    token_file.write_text("file-token-9999\n")
+    monkeypatch.setenv("BO_INTTOKEN", "")                 # env unset
+    monkeypatch.setenv("BO_INTTOKEN_FILE", str(token_file))
+    _clear_settings_cache()
+    try:
+        assert settings_store.bo_config(db)["inttoken"] == "file-token-9999"
+        # Refreshing the FILE takes effect without any cache reset.
+        token_file.write_text("file-token-0000")
+        assert settings_store.bo_config(db)["inttoken"] == "file-token-0000"
+        view = settings_store.public_view(db)
+        assert view["bo"]["inttoken_masked"] == "••••0000"
+    finally:
+        _clear_settings_cache()
+
+
+def test_env_token_beats_file(db, monkeypatch, tmp_path):
+    token_file = tmp_path / "token"
+    token_file.write_text("file-token-9999")
+    monkeypatch.setenv("BO_INTTOKEN", "env-token-1234")
+    monkeypatch.setenv("BO_INTTOKEN_FILE", str(token_file))
+    _clear_settings_cache()
+    try:
+        assert settings_store.bo_config(db)["inttoken"] == "env-token-1234"
+    finally:
+        _clear_settings_cache()
+
+
+def test_missing_token_file_is_harmless(db, monkeypatch):
+    monkeypatch.setenv("BO_INTTOKEN", "")
+    monkeypatch.setenv("BO_INTTOKEN_FILE", "/nonexistent/path/token")
+    _clear_settings_cache()
+    try:
+        assert settings_store.bo_config(db)["inttoken"] == ""
+    finally:
+        _clear_settings_cache()
