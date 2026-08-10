@@ -106,6 +106,65 @@ def _summary_text(fields: dict) -> str:
 
 _ISSUE_KEY_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*-\d+")
 
+_UUID_TOKEN_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
+)
+_LABELED_MATCH_RE = re.compile(
+    r"(definitive|potential)\s+match\b[^\n]*", re.IGNORECASE
+)
+
+
+def extract_match_uuids(text: str) -> list[str]:
+    """Company UUIDs from free text (a Jira comment), best-first and deduped.
+
+    Submitters have started posting the definitive/potential match UUIDs in
+    COMMENTS instead of the description. Order of trust: UUIDs on a line
+    labeled "definitive match" -> "potential match" -> any bare UUID token.
+    """
+    text = str(text or "")
+    definitive: list[str] = []
+    potential: list[str] = []
+    for m in _LABELED_MATCH_RE.finditer(text):
+        bucket = definitive if m.group(1).lower() == "definitive" else potential
+        bucket.extend(u.lower() for u in _UUID_TOKEN_RE.findall(m.group(0)))
+    bare = [u.lower() for u in _UUID_TOKEN_RE.findall(text)]
+    out: list[str] = []
+    for u in definitive + potential + bare:
+        if u not in out:
+            out.append(u)
+    return out
+
+
+def fetch_comment_match_uuids(jira_cfg: dict, issue_key: str) -> list[str]:
+    """Company UUIDs found in the issue's comments (read-only; [] on failure).
+
+    Newest comments win the ordering within each trust level, so a submitter's
+    correction outranks their earlier post.
+    """
+    key = normalize_issue_ref(issue_key)
+    base_url, email, api_token = _require_jira_cfg(jira_cfg)
+    url = f"{base_url}/rest/api/3/issue/{key}/comment"
+    headers = {
+        "Authorization": _basic_auth_header(email, api_token),
+        "Accept": "application/json",
+    }
+    try:
+        resp = httpx.get(url, headers=headers,
+                         params={"maxResults": 50, "orderBy": "-created"}, timeout=30)
+        if resp.status_code >= 400:
+            return []
+        comments = (resp.json() or {}).get("comments") or []
+    except (httpx.HTTPError, ValueError):
+        return []
+    out: list[str] = []
+    for c in comments:
+        body = c.get("body")
+        text = body if isinstance(body, str) else flatten_adf(body)
+        for u in extract_match_uuids(text):
+            if u not in out:
+                out.append(u)
+    return out
+
 
 def normalize_issue_ref(ref: str) -> str:
     """Turn a bare issue key or any Jira issue URL into an uppercase key.

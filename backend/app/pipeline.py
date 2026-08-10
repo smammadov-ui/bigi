@@ -74,8 +74,16 @@ def _alerts_public(alerts: dict) -> dict:
     }
 
 
-def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None) -> dict:
-    """Run the full declaration pipeline and return the editable result dict."""
+def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None,
+                 comment_uuids: list[str] | None = None) -> dict:
+    """Run the full declaration pipeline and return the editable result dict.
+
+    ``comment_uuids``: company UUIDs found in the ticket's Jira COMMENTS
+    (submitters post definitive/potential matches there when the description
+    lacks them). Merged with the description's UUIDs: one distinct value
+    resolves directly, several go through the candidates path (wallet
+    disambiguation / operator picker).
+    """
     if not raw_text or not raw_text.strip():
         raise BigiError("raw_text is required")
 
@@ -84,6 +92,26 @@ def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None) ->
     # --- Step 1: parse --------------------------------------------------------
     p = parse_jira(raw_text)
     fields = p["fields"]
+
+    if comment_uuids:
+        desc_uuids = [u for u in ([fields.get("company_uuid")] if fields.get("company_uuid") else [])]
+        desc_uuids += [u.strip() for u in (fields.get("company_uuid_candidates") or "").split(",") if u.strip()]
+        merged: list[str] = []
+        for u in desc_uuids + [str(c).strip() for c in comment_uuids if str(c).strip()]:
+            if u.lower() not in (m.lower() for m in merged):
+                merged.append(u)
+        if merged != desc_uuids:
+            if len(merged) == 1:
+                fields["company_uuid"] = merged[0]
+                fields["company_uuid_candidates"] = ""
+                p["warnings"] = list(p.get("warnings") or []) + [
+                    "company UUID taken from a Jira comment (definitive/potential match)"]
+            else:
+                fields["company_uuid"] = ""
+                fields["company_uuid_candidates"] = ", ".join(merged)
+                p["warnings"] = list(p.get("warnings") or []) + [
+                    f"{len(merged)} company UUIDs from description+comments — "
+                    "disambiguating by wallet IBAN / operator selection"]
     parsed = {
         **fields,
         "warnings": p.get("warnings", []),

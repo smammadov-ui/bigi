@@ -156,21 +156,27 @@ def case_trace(issue_key: str, company_uuid: str = "", use_llm: bool = False) ->
     from app.settings_store import jira_config
     from app.trace import build_trace
 
+    from app.jira import fetch_comment_match_uuids
+
     init_db()
     db = SessionLocal()
     try:
-        issue = fetch_issue(jira_config(db), issue_key)
+        cfg = jira_config(db)
+        issue = fetch_issue(cfg, issue_key)
+        comment_uuids = fetch_comment_match_uuids(cfg, issue_key)
         if not use_llm:
             # Force deterministic compose by masking the LLM key for this run.
             from app import pipeline as _p
             real = _p.llm_config
             _p.llm_config = lambda _db: {"provider": "openai", "model": "", "api_key": ""}
             try:
-                result = run_pipeline(db, issue["description"], company_uuid or None)
+                result = run_pipeline(db, issue["description"], company_uuid or None,
+                                      comment_uuids)
             finally:
                 _p.llm_config = real
         else:
-            result = run_pipeline(db, issue["description"], company_uuid or None)
+            result = run_pipeline(db, issue["description"], company_uuid or None,
+                                  comment_uuids)
         trace = build_trace(result, include_document=True)
         trace["jira"] = {"key": issue["key"], "summary": issue["summary"]}
         return trace

@@ -145,3 +145,43 @@ def test_declaration_endpoint_e2e(monkeypatch, client):
 def test_declaration_endpoint_empty_400(client):
     resp = client.post("/api/declaration", json={"raw_text": "  "})
     assert resp.status_code == 400
+
+
+# --- company UUIDs from Jira comments ----------------------------------------------
+
+
+def test_single_comment_uuid_resolves_company(monkeypatch, db, client):
+    stub = StubBO(fixtures={UUID: company()})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    f = fields(company_uuid="", seized_iban="", debtor_register_number="",
+               debtor_name="Unknown Ltd")      # nothing findable by search
+    r = pipeline.run_pipeline(db, raw_ticket(f), comment_uuids=[UUID])
+    assert r["account"]["company_uuid"] == UUID
+    assert r["account"]["identified_by"] == "ticket_uuid"
+    assert r["scenario"] == "S1"
+    assert any("Jira comment" in w for w in r["parsed"]["warnings"])
+
+
+def test_conflicting_desc_and_comment_uuids_become_candidates(monkeypatch, db, client):
+    fx1, fx2 = company(uuid=UUID), company(uuid=UUID2, name="Other GmbH", wallets=[])
+    stub = StubBO(fixtures={UUID: fx1, UUID2: fx2})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    f = fields(seized_iban="", debtor_register_number="")   # desc uuid = UUID
+    r = pipeline.run_pipeline(db, raw_ticket(f), comment_uuids=[UUID2])
+    # Two distinct UUIDs -> candidates path; no ticket IBAN -> operator picks.
+    assert r["status"] == "pending_selection"
+    ids = [c["id"] for c in r["account"]["candidates"]]
+    assert UUID in ids and UUID2 in ids
+
+
+def test_comment_uuid_with_ticket_iban_disambiguates_by_wallet(monkeypatch, db, client):
+    fx1 = company(uuid=UUID)                                # owns the seized IBAN
+    fx2 = company(uuid=UUID2, name="Other GmbH",
+                  wallets=[{"id": "w", "iban": "DE02120300000000202051",
+                            "name": "Main", "balance": 1.0, "currency": "EUR"}])
+    stub = StubBO(fixtures={UUID: fx1, UUID2: fx2})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    f = fields(company_uuid="", debtor_register_number="")  # seized IBAN present
+    r = pipeline.run_pipeline(db, raw_ticket(f), comment_uuids=[UUID, UUID2])
+    assert r["account"]["company_uuid"] == UUID
+    assert r["account"]["identified_by"] == "wallet_iban"

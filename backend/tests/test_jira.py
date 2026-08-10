@@ -247,3 +247,57 @@ def test_search_issues_bounds_unbounded_jql(monkeypatch):
     assert jira._ensure_bounded("project = SEIZ ORDER BY created DESC") == (
         "project = SEIZ ORDER BY created DESC"
     )
+
+
+# --- match UUIDs from comments (submitters post them there now) --------------------
+
+
+def test_extract_match_uuids_labeled_and_bare():
+    from app.jira import extract_match_uuids
+
+    text = ("Hello, definitive match: 11111111-1111-1111-1111-111111111111\n"
+            "also potential match 22222222-2222-2222-2222-222222222222 maybe\n"
+            "unrelated: 33333333-3333-3333-3333-333333333333")
+    out = extract_match_uuids(text)
+    assert out == ["11111111-1111-1111-1111-111111111111",
+                   "22222222-2222-2222-2222-222222222222",
+                   "33333333-3333-3333-3333-333333333333"]
+
+
+def test_extract_match_uuids_dedupes_and_handles_empty():
+    from app.jira import extract_match_uuids
+
+    assert extract_match_uuids("definitive match: 11111111-1111-1111-1111-111111111111 "
+                               "and again 11111111-1111-1111-1111-111111111111") == [
+        "11111111-1111-1111-1111-111111111111"]
+    assert extract_match_uuids("no uuids here") == []
+    assert extract_match_uuids("") == []
+
+
+def test_fetch_comment_match_uuids(monkeypatch):
+    from app import jira as jira_mod
+
+    body_adf = {"type": "doc", "content": [{"type": "paragraph", "content": [
+        {"type": "text", "text": "definitive match: 11111111-1111-1111-1111-111111111111"}]}]}
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        assert url.endswith("/rest/api/3/issue/FPOPCL-1/comment")
+        return _Resp(200, {"comments": [{"body": body_adf},
+                                        {"body": "plain 22222222-2222-2222-2222-222222222222"}]})
+
+    monkeypatch.setattr(jira_mod.httpx, "get", fake_get)
+    cfg = {"base_url": "https://x.atlassian.net", "email": "e@x", "api_token": "t"}
+    out = jira_mod.fetch_comment_match_uuids(cfg, "FPOPCL-1")
+    assert out == ["11111111-1111-1111-1111-111111111111",
+                   "22222222-2222-2222-2222-222222222222"]
+
+
+def test_fetch_comment_match_uuids_failure_is_empty(monkeypatch):
+    from app import jira as jira_mod
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        return _Resp(500, {})
+
+    monkeypatch.setattr(jira_mod.httpx, "get", fake_get)
+    cfg = {"base_url": "https://x.atlassian.net", "email": "e@x", "api_token": "t"}
+    assert jira_mod.fetch_comment_match_uuids(cfg, "FPOPCL-1") == []

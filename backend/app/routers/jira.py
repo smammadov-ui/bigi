@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..bo_client import BOError
 from ..db import get_db
-from ..jira import fetch_issue, search_issues
+from ..jira import fetch_comment_match_uuids, fetch_issue, search_issues
 from ..pipeline import run_pipeline
 from ..schemas import JiraFetchRequest, BigiError
 from ..settings_store import jira_config
@@ -28,8 +28,12 @@ def _guard(fn, *args, **kwargs):
 
 @router.post("/api/jira/fetch")
 def jira_fetch(body: JiraFetchRequest, db: Session = Depends(get_db)):
-    issue = _guard(fetch_issue, jira_config(db), body.issue_key)
-    result = _guard(run_pipeline, db, issue["description"])
+    cfg = jira_config(db)
+    issue = _guard(fetch_issue, cfg, body.issue_key)
+    # Submitters post definitive/potential match UUIDs in COMMENTS when the
+    # description lacks them; a failed comment read never blocks the run.
+    comment_uuids = fetch_comment_match_uuids(cfg, body.issue_key)
+    result = _guard(run_pipeline, db, issue["description"], None, comment_uuids)
     # description is included so the UI can re-run the pipeline with a chosen
     # company_uuid (candidate pick / manual entry) without re-pasting the text.
     return {
