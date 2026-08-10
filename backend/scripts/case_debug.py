@@ -2,6 +2,7 @@
 server is up:
 
     python3 scripts/case_debug.py FPOPCL-24636
+    python3 scripts/case_debug.py FPOPCL-24636 --company <uuid>   # replay an operator pick
     python3 scripts/case_debug.py FPOPCL-24636 --host http://localhost:8000
 
 Fetches the issue through the running backend (same path the UI uses) and
@@ -29,12 +30,30 @@ def main() -> int:
     host = "http://localhost:8000"
     if "--host" in args:
         host = args[args.index("--host") + 1].rstrip("/")
+    company = ""
+    if "--company" in args:
+        company = args[args.index("--company") + 1].strip()
 
     r = httpx.post(f"{host}/api/jira/fetch", json={"issue_key": issue}, timeout=180)
     if r.status_code != 200:
         print(f"HTTP {r.status_code}: {r.text[:300]}")
         return 1
     d = r.json()
+
+    if company:
+        # Replay the operator's pick: re-run the pipeline on the fetched
+        # description with the chosen company UUID (same as the UI's "Use").
+        description = (d.get("jira") or {}).get("description") or ""
+        if not description:
+            print("no description returned by /api/jira/fetch — cannot re-run with a pick")
+            return 1
+        r = httpx.post(f"{host}/api/declaration",
+                       json={"raw_text": description, "company_uuid": company},
+                       timeout=180)
+        if r.status_code != 200:
+            print(f"HTTP {r.status_code}: {r.text[:300]}")
+            return 1
+        d = r.json()
 
     from app.trace import build_trace
 
