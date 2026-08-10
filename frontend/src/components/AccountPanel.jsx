@@ -37,7 +37,7 @@ const BUCKET_BADGE = {
 // uniquely resolve it (needs_selection), show the candidate picker /
 // manual-UUID re-submit. Once resolved, also show the confirmation outcome
 // (IBAN / address / DOB rule) and the BO account status bucket.
-export default function AccountPanel({ account, onPick, busy }) {
+export default function AccountPanel({ account, onPick, onNoMatch, busy }) {
   const [showReasons, setShowReasons] = useState(false);
   if (!account) return null;
   const resolved = !!account.company_uuid;
@@ -148,7 +148,8 @@ export default function AccountPanel({ account, onPick, busy }) {
       )}
 
       {account.needs_selection && (
-        <CandidatePicker candidates={account.candidates} onPick={onPick} busy={busy} />
+        <CandidatePicker candidates={account.candidates} onPick={onPick}
+                         onNoMatch={onNoMatch} busy={busy} />
       )}
     </div>
   );

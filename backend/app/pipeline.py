@@ -47,7 +47,7 @@ from .classify import CRIMINAL, REPEAL, RESTRICTION, RFI_KIND, classify_ticket
 from .formatting import de_amount
 from .matching import match_account
 from .parser import parse_jira
-from .schemas import BigiError, Scenario
+from .schemas import BigiError, MatchOutcome, Scenario
 from .scenarios import build_plan, resolve_scenario
 from .settings_store import bo_config, llm_config
 from .templates import TEMPLATES, build_subject, select_template, template_kind
@@ -75,7 +75,8 @@ def _alerts_public(alerts: dict) -> dict:
 
 
 def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None,
-                 comment_uuids: list[str] | None = None) -> dict:
+                 comment_uuids: list[str] | None = None,
+                 no_match: bool = False) -> dict:
     """Run the full declaration pipeline and return the editable result dict.
 
     ``comment_uuids``: company UUIDs found in the ticket's Jira COMMENTS
@@ -83,6 +84,10 @@ def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None,
     lacks them). Merged with the description's UUIDs: one distinct value
     resolves directly, several go through the candidates path (wallet
     disambiguation / operator picker).
+
+    ``no_match``: the operator declared that NONE of the offered candidates is
+    the debtor — identification is skipped and the case resolves as NO_MATCH
+    (Scenario 4 -> T7/T8 email to the creditor).
     """
     if not raw_text or not raw_text.strip():
         raise BigiError("raw_text is required")
@@ -157,7 +162,8 @@ def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None,
     # manager. On failure the pipeline continues single-workspace with a warning.
     with all_workspaces(client) as ws:
         result = _run_checks_and_compose(db, client, raw_text, parsed, fields,
-                                         company_uuid, kind, cls_notes, warnings)
+                                         company_uuid, kind, cls_notes, warnings,
+                                         no_match=no_match)
     if ws.get("switched"):
         result["warnings"].append(
             "searched across workspaces: " + ", ".join(ws.get("available") or [])
@@ -169,33 +175,52 @@ def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None,
     return result
 
 
+def _identification_failed(parsed: dict, fields: dict, exc) -> dict:
+    """Identification itself failed (search down) — nothing to decide on.
+    The operator can enter a UUID manually or retry later."""
+    account = {
+        "company_uuid": "", "business_name": "", "matched_by": "none",
+        "identified_by": None, "candidates": [], "needs_selection": True,
+        "error": str(exc), "outcome": None, "account_type": "",
+        "account_status": "", "status_bucket": "UNKNOWN",
+        "account_status_updated": "", "account_address": "", "dob": "",
+        "ibans": [], "reasons": [], "seized_iban": fields.get("seized_iban", ""),
+        "seized_iban_source": None, "main_wallet": None, "address_check": None,
+    }
+    return {
+        "status": "pending_selection",
+        "parsed": parsed,
+        "account": account,
+        "alerts": None, "balance": None, "seizure_check": None,
+        "scenario": None, "plan": None, "amount": None, "declaration": None,
+        "warnings": [f"identification failed: {exc}"],
+    }
+
+
 def _run_checks_and_compose(db: Session, client, raw_text: str, parsed: dict,
                             fields: dict, company_uuid, kind, cls_notes,
-                            warnings: list) -> dict:
+                            warnings: list, no_match: bool = False) -> dict:
     """Steps 3–10 (matching -> checks -> scenario -> document); see run_pipeline."""
     # --- Step 3: identify + confirm + status (one wallets call, reused) -------
-    try:
-        match = match_account(client, fields, manual_uuid=company_uuid)
-    except BOError as exc:
-        # Identification itself failed (search down) — nothing to decide on.
-        # The operator can enter a UUID manually or retry later.
-        account = {
+    if no_match:
+        # Operator's call: none of the candidates is the debtor. No further
+        # identification — the case is a Scenario-4 "cannot find the user".
+        match = {
             "company_uuid": "", "business_name": "", "matched_by": "none",
-            "identified_by": None, "candidates": [], "needs_selection": True,
-            "error": str(exc), "outcome": None, "account_type": "",
-            "account_status": "", "status_bucket": "UNKNOWN",
+            "identified_by": None, "candidates": [], "needs_selection": False,
+            "error": None, "outcome": MatchOutcome.NO_MATCH.value,
+            "account_type": "", "account_status": "", "status_bucket": "UNKNOWN",
             "account_status_updated": "", "account_address": "", "dob": "",
-            "ibans": [], "reasons": [], "seized_iban": fields.get("seized_iban", ""),
-            "seized_iban_source": None, "main_wallet": None,
+            "ibans": [], "wallets_items": [], "wallets_error": None,
+            "seized_iban": fields.get("seized_iban", ""),
+            "seized_iban_source": None, "main_wallet": None, "address_check": None,
+            "reasons": ["operator declared: none of the candidates is the debtor (no match)"],
         }
-        return {
-            "status": "pending_selection",
-            "parsed": parsed,
-            "account": account,
-            "alerts": None, "balance": None, "seizure_check": None,
-            "scenario": None, "plan": None, "amount": None, "declaration": None,
-            "warnings": [f"identification failed: {exc}"],
-        }
+    else:
+        try:
+            match = match_account(client, fields, manual_uuid=company_uuid)
+        except BOError as exc:
+            return _identification_failed(parsed, fields, exc)
 
     if match.get("company_uuid") and not fields.get("company_uuid"):
         # Persist the resolved UUID back so it is visible in the parsed fields.

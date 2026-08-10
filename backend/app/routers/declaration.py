@@ -25,4 +25,5 @@ def _guard(fn, *args, **kwargs):
 def create_declaration(body: DeclarationRequest, db: Session = Depends(get_db)):
     if not body.raw_text or not body.raw_text.strip():
         raise HTTPException(status_code=400, detail="raw_text is required")
-    return _guard(run_pipeline, db, body.raw_text, body.company_uuid)
+    return _guard(run_pipeline, db, body.raw_text, body.company_uuid, None,
+                  body.no_match)

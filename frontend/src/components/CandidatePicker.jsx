@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 // Shown when the account could not be uniquely resolved. Either pick one of the
 // returned cstools candidates or type a company UUID by hand; either way we
 // re-run the pipeline with the chosen company_uuid.
-export default function CandidatePicker({ candidates, onPick, busy }) {
+export default function CandidatePicker({ candidates, onPick, onNoMatch, busy }) {
   const [manual, setManual] = useState('');
   const list = candidates || [];
 
@@ -35,6 +35,20 @@ export default function CandidatePicker({ candidates, onPick, busy }) {
               </div>
             ))}
           </div>
+        </>
+      )}
+
+      {onNoMatch && (
+        <>
+          <hr className="divider" />
+          <button
+            className="btn"
+            disabled={busy}
+            onClick={onNoMatch}
+            title="Declare that none of the candidates is the debtor — resolves as NO MATCH (Scenario 4: ask the creditor for the IBAN)"
+          >
+            None of these — no match (T7/T8)
+          </button>
         </>
       )}
 

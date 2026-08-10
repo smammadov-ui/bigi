@@ -185,3 +185,36 @@ def test_comment_uuid_with_ticket_iban_disambiguates_by_wallet(monkeypatch, db, 
     r = pipeline.run_pipeline(db, raw_ticket(f), comment_uuids=[UUID, UUID2])
     assert r["account"]["company_uuid"] == UUID
     assert r["account"]["identified_by"] == "wallet_iban"
+
+
+# --- operator "none of these" declaration ------------------------------------------
+
+
+def test_no_match_flag_forces_s4_no_iban(monkeypatch, db, client):
+    stub = StubBO(fixtures={UUID: company()})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    f = fields(company_uuid="", seized_iban="", debtor_register_number="")
+    r = pipeline.run_pipeline(db, raw_ticket(f), no_match=True)
+    assert r["scenario"] == "S4_NO_IBAN"
+    assert r["declaration"]["template"] == "T7"
+    assert r["account"]["outcome"] == "NO_MATCH"
+    assert any("operator declared" in x for x in r["account"]["reasons"])
+    # No identification calls were made (whoami/workspace calls aside).
+    assert not [c for c in stub.calls if c[0] == "cstools_search"]
+
+
+def test_no_match_flag_with_iban_is_t8(monkeypatch, db, client):
+    stub = StubBO(fixtures={UUID: company()})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    r = pipeline.run_pipeline(db, raw_ticket(), no_match=True)   # seized IBAN present
+    assert r["scenario"] == "S4_IBAN"
+    assert r["declaration"]["template"] == "T8"
+
+
+def test_no_match_endpoint_flag(monkeypatch, client):
+    stub = StubBO(fixtures={UUID: company()})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    resp = client.post("/api/declaration",
+                       json={"raw_text": raw_ticket(), "no_match": True})
+    assert resp.status_code == 200
+    assert resp.json()["scenario"] == "S4_IBAN"

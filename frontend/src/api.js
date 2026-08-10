@@ -70,9 +70,10 @@ export function testLLM() {
 // ---- Declaration pipeline ----
 // company_uuid is an optional operator override after candidate selection /
 // manual entry; omitted on the first pass.
-export function postDeclaration(raw_text, company_uuid) {
+export function postDeclaration(raw_text, company_uuid, no_match) {
   const body = { raw_text };
   if (company_uuid) body.company_uuid = company_uuid;
+  if (no_match) body.no_match = true;
   return request('POST', '/api/declaration', body);
 }
 

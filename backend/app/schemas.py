@@ -24,6 +24,9 @@ class DeclarationRequest(BaseModel):
     raw_text: str
     # operator override after candidate selection / manual entry
     company_uuid: str | None = None
+    # operator declared "none of the candidates is the debtor" -> force
+    # NO_MATCH (Scenario 4: T7 without a ticket IBAN, T8 with one)
+    no_match: bool = False
 
 
 class JiraFetchRequest(BaseModel):

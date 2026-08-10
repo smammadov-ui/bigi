@@ -124,6 +124,15 @@ export default function Home() {
   // it may still hold a previous case's text.
   async function repick(uuid) {
     if (!uuid) return;
+    await rerunWith({ uuid });
+  }
+
+  // Operator's "none of these" declaration -> forces NO_MATCH (Scenario 4).
+  async function declareNoMatch() {
+    await rerunWith({ noMatch: true });
+  }
+
+  async function rerunWith({ uuid, noMatch }) {
     const text = activeRaw.trim();
     if (!text) {
       setError(
@@ -134,7 +143,7 @@ export default function Home() {
     setBusy(true);
     setError('');
     try {
-      const res = await postDeclaration(text, uuid);
+      const res = await postDeclaration(text, uuid, noMatch);
       showResult(res, jiraMeta, text);
     } catch (e) {
       setError(e.message);
@@ -337,7 +346,8 @@ export default function Home() {
 
             <div className="rail">
               <ScenarioPanel scenario={result.scenario} plan={result.plan} />
-              <AccountPanel account={result.account} onPick={repick} busy={busy} />
+              <AccountPanel account={result.account} onPick={repick}
+                            onNoMatch={declareNoMatch} busy={busy} />
               <AlertsPanel alerts={result.alerts} />
               <BalancePanel balance={result.balance} />
               <SeizureCheck check={result.seizure_check} />
