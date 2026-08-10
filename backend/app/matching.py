@@ -279,6 +279,60 @@ def _pick_search_hit(items: list[dict], kind: str, term: str, full_name: str = "
     return None
 
 
+def _disambiguate_same_name(client, parsed: dict, exact_items: list[dict],
+                            full_name: str, reasons: list[str]):
+    """Several candidates carry EXACTLY the ticket's (normalized) name — often
+    duplicate BO records. Use the ticket's address as the locator: grade each
+    candidate's overview address (capped); a single STRONG one wins. If several
+    are strong (true duplicates share the registered address), the single one
+    with an OPEN account wins. Anything else -> annotated picker.
+
+    Returns ``(ident_dict, None)`` when resolved, else ``(None, graded_candidates)``.
+    """
+    ticket_addr = (parsed.get("debtor_address") or "").strip()
+    if not ticket_addr:
+        return None, None
+    graded: list[tuple[dict, dict]] = []   # (item, address_check)
+    for it in exact_items[:6]:             # bounded: one overview call each
+        try:
+            overview = client.cstools_overview(it.get("id")) or {}
+        except BOError:
+            graded.append((it, {"grade": UNKNOWN, "detail": "overview unavailable"}))
+            continue
+        graded.append((it, compare_addresses(ticket_addr, overview.get("address"))))
+
+    strong = [(it, ac) for it, ac in graded if ac["grade"] == STRONG]
+    if len(strong) == 1:
+        it, ac = strong[0]
+        reasons.append(
+            f"{len(exact_items)} same-name candidates — disambiguated by address "
+            f"({ac['detail']})")
+        return ({"company_uuid": (it.get("id") or "").strip(), "identified_by": "name",
+                 "name_exact": True, "business_name": it.get("businessName", ""),
+                 "_search_item": it}, None)
+    if len(strong) > 1:
+        open_ones = [(it, ac) for it, ac in strong
+                     if status_bucket(it.get("accountStatus", "")) == AccountStatusBucket.OPEN.value]
+        if len(open_ones) == 1:
+            it, ac = open_ones[0]
+            reasons.append(
+                f"{len(strong)} same-name candidates share the matching address "
+                "(duplicate records) — the only one with an OPEN account chosen")
+            return ({"company_uuid": (it.get("id") or "").strip(), "identified_by": "name",
+                     "name_exact": True, "business_name": it.get("businessName", ""),
+                     "_search_item": it}, None)
+        reasons.append(f"{len(strong)} same-name candidates with matching addresses — operator picks")
+    else:
+        reasons.append("several same-name candidates, none with a matching address — operator picks")
+    graded_candidates = [
+        {**_candidate(it),
+         "note": f"address: {ac['grade']}"
+                 + (f" · {it.get('accountStatus')}" if it.get("accountStatus") else "")}
+        for it, ac in graded
+    ]
+    return None, graded_candidates
+
+
 def _find_by_name(client, full_name: str, exclude_id=None):
     """Resolve ``full_name`` to a single company via the variant search.
 
@@ -452,9 +506,24 @@ def _identify(client, parsed: dict, manual_uuid: str | None, reasons: list[str])
                     "name_exact": name_exact,
                     "business_name": hit.get("businessName", ""),
                     "_search_item": hit}
+        if kind == "name":
+            exact = [it for it in items if _same_name(it.get("businessName"), full_name)]
+            if len(exact) > 1:
+                resolved, graded = _disambiguate_same_name(client, parsed, exact, full_name, reasons)
+                if resolved is not None:
+                    return resolved
+                return {"company_uuid": "",
+                        "candidates": graded or [_candidate(it) for it in exact],
+                        "needs_selection": True,
+                        "error": (f"{len(exact)} companies carry exactly the ticket's name — "
+                                  "pick the debtor (address grades shown)")}
         # Several inexact candidates -> the operator picks (never guess).
-        return {"company_uuid": "", "candidates": [_candidate(it) for it in items],
-                "needs_selection": True, "error": None}
+        # The fuzzy search can return dozens of loose hits; cap the picker.
+        shown = [_candidate(it) for it in items[:12]]
+        note = None if len(items) <= 12 else \
+            f"showing the first 12 of {len(items)} search hits — refine via manual UUID if absent"
+        return {"company_uuid": "", "candidates": shown,
+                "needs_selection": True, "error": note}
 
     # 5. Nothing resolved anywhere -> NO_MATCH territory (Scenario 4).
     return {"company_uuid": ""}

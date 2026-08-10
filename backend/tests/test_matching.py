@@ -474,3 +474,98 @@ def test_main_wallet_prefers_de_eur_over_gb_eur():
     f = fields(seized_iban="")
     out = match_account(StubBO(fixtures={UUID: fx}), f)
     assert out["seized_iban"] == "DE08100180000526392909"
+
+
+# --- same-name disambiguation by address (FPOPCL-31056 class) ----------------------
+
+
+def _elbstar_items(n=4, reg="HRB 180002"):
+    names = ["Elbstar Solution GmbH", "ELBSTAR SOLUTION GmbH",
+             "ELBSTAR SOLUTION GmbH", "ELBSTAR SOLUTION Gmbh"]
+    return [{"id": f"e1b57a12-000{i}-4000-8000-00000000000{i}",
+             "businessName": names[i], "regNumber": reg,
+             "accountStatus": "AccountOpened", "type": "Company"}
+            for i in range(n)]
+
+
+def _stub_with_overviews(items, addr_by_id, extra_fixtures=None):
+    fx = dict(extra_fixtures or {})
+    for it in items:
+        f = company(uuid=it["id"], name=it["businessName"])
+        f["overview"] = {"type": "Company", "address": addr_by_id.get(it["id"], {})}
+        fx[it["id"]] = f
+    noise = [{"id": "00000000-9999-4000-8000-000000000009",
+              "businessName": "SC Solution GmbH", "regNumber": ""}]
+    return StubBO(fixtures=fx, search_items_map={"ELBSTAR SOLUTION GmbH": items + noise,
+                                                 "ELBSTAR SOLUTION": items + noise})
+
+
+HAMBURG = {"street": "Am Hehsel", "houseNo": "38", "postCode": "22339", "city": "Hamburg"}
+ELSEWHERE = {"street": "Andere Str.", "houseNo": "1", "postCode": "99999", "city": "X"}
+TICKET_ADDR = "Am Hehsel 38, , 22339, Hamburg"
+
+
+def _elbstar_fields():
+    return fields(company_uuid="", seized_iban="", debtor_register_number="",
+                  debtor_name="ELBSTAR SOLUTION GmbH", debtor_address=TICKET_ADDR)
+
+
+def test_same_name_disambiguated_by_single_strong_address():
+    items = _elbstar_items()
+    addr = {items[0]["id"]: ELSEWHERE, items[1]["id"]: HAMBURG,
+            items[2]["id"]: ELSEWHERE, items[3]["id"]: ELSEWHERE}
+    out = match_account(_stub_with_overviews(items, addr), _elbstar_fields())
+    assert out["company_uuid"] == items[1]["id"]
+    assert out["outcome"] == "MATCH"
+    assert out["matched_by"] == "address"
+    assert any("disambiguated by address" in r for r in out["reasons"])
+
+
+def test_same_name_duplicates_prefer_open_account():
+    items = _elbstar_items()
+    items[1]["accountStatus"] = "AccountClosed"
+    items[2]["accountStatus"] = "AccountOpened"
+    items[3]["accountStatus"] = "AccountClosed"
+    items[0]["accountStatus"] = "AccountClosed"
+    addr = {it["id"]: HAMBURG for it in items}   # true duplicates: same address
+    out = match_account(_stub_with_overviews(items, addr), _elbstar_fields())
+    assert out["company_uuid"] == items[2]["id"]
+    assert any("OPEN account chosen" in r for r in out["reasons"])
+
+
+def test_same_name_multiple_open_strong_goes_to_annotated_picker():
+    items = _elbstar_items()
+    addr = {it["id"]: HAMBURG for it in items}   # all strong, all open
+    out = match_account(_stub_with_overviews(items, addr), _elbstar_fields())
+    assert out["needs_selection"] is True
+    assert len(out["candidates"]) == 4           # exact subset only, not the noise
+    assert all("address: strong" in (c.get("note") or "") for c in out["candidates"])
+
+
+def test_same_name_none_strong_annotated_picker():
+    items = _elbstar_items()
+    addr = {it["id"]: ELSEWHERE for it in items}
+    out = match_account(_stub_with_overviews(items, addr), _elbstar_fields())
+    assert out["needs_selection"] is True
+    assert all("address: mismatch" in (c.get("note") or "") for c in out["candidates"])
+
+
+def test_same_name_without_ticket_address_plain_picker():
+    items = _elbstar_items()
+    f = _elbstar_fields()
+    f["debtor_address"] = ""
+    out = match_account(_stub_with_overviews(items, {}), f)
+    assert out["needs_selection"] is True
+    assert len(out["candidates"]) == 4
+
+
+def test_fuzzy_noise_capped_at_12():
+    noise = [{"id": f"00000000-0000-4000-8000-0000000000{i:02d}",
+              "businessName": f"Solution {i} GmbH", "regNumber": ""} for i in range(30)]
+    stub = StubBO(search_items_map={"Unique Name GmbH": noise, "Unique Name": noise})
+    f = fields(company_uuid="", seized_iban="", debtor_register_number="",
+               debtor_name="Unique Name GmbH")
+    out = match_account(stub, f)
+    assert out["needs_selection"] is True
+    assert len(out["candidates"]) == 12
+    assert "first 12 of 30" in (out["error"] or "")

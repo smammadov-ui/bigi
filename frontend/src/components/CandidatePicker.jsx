@@ -23,6 +23,7 @@ export default function CandidatePicker({ candidates, onPick, busy }) {
                     {c.id}
                     {c.regNumber ? ` · ${c.regNumber}` : ''}
                   </div>
+                  {c.note && <div className="meta">{c.note}</div>}
                 </div>
                 <button
                   className="btn small primary"
