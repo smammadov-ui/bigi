@@ -461,3 +461,16 @@ def test_main_wallet_prefers_eur():
     out = match_account(StubBO(fixtures={UUID: fx}), f)
     assert out["seized_iban"] == "DE00EUR"
     assert out["main_wallet"]["iban"] == "DE00EUR"
+
+
+def test_main_wallet_prefers_de_eur_over_gb_eur():
+    # Live case: first EUR wallet carried a GB IBAN — the letter must quote DE.
+    fx = company(wallets=[
+        {"id": "w1", "iban": "GB27TCCL04140487724945", "name": "EUR",
+         "balance": 0.0, "currency": "EUR"},
+        {"id": "w2", "iban": "DE08100180000526392909", "name": "Zweit",
+         "balance": 27363.65, "currency": "EUR"},
+    ])
+    f = fields(seized_iban="")
+    out = match_account(StubBO(fixtures={UUID: fx}), f)
+    assert out["seized_iban"] == "DE08100180000526392909"

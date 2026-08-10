@@ -61,9 +61,11 @@ export default function AccountPanel({ account, onPick, busy }) {
 
       {resolved && account.outcome === 'NO_MATCH' && (
         <div className="banner warn">
-          A company was <strong>identified</strong> by search, but it is{' '}
-          <strong>not confirmed</strong> as the debtor — the case is treated as
-          NO MATCH (Scenario 4).
+          <div>
+            A company was <strong>identified</strong> by search, but it is{' '}
+            <strong>not confirmed</strong> as the debtor — the case is treated
+            as NO MATCH (Scenario 4).
+          </div>
         </div>
       )}
 

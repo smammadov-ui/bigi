@@ -688,14 +688,27 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
 
 
 def _pick_main_wallet(wallets_items: list[dict]):
-    """The account's Main wallet: prefer a wallet literally named 'Main', then
-    the first EUR wallet with an IBAN (a §840 declaration should never quote a
-    USD wallet's IBAN), then any wallet with an IBAN."""
-    items = wallets_items or []
+    """The account's Main wallet, per the spec's derivation order: a wallet
+    literally named 'Main' -> a German (DE…) EUR wallet -> any DE IBAN -> any
+    EUR wallet -> any wallet with an IBAN. (Live case: an account whose first
+    EUR wallet carried a GB IBAN — a §840 letter should quote the DE IBAN.)"""
+    items = [w for w in (wallets_items or []) if w.get("iban")]
+
+    def _is(w, *, de=None, eur=None):
+        iban_de = str(w.get("iban", "")).strip().upper().startswith("DE")
+        cur_eur = str(w.get("currency") or "").strip().upper() == "EUR"
+        return (de is None or iban_de == de) and (eur is None or cur_eur == eur)
+
     for w in items:
-        if str(w.get("name", "")).strip().lower() == "main" and w.get("iban"):
+        if str(w.get("name", "")).strip().lower() == "main":
             return w
     for w in items:
-        if str(w.get("currency") or "").strip().upper() == "EUR" and w.get("iban"):
+        if _is(w, de=True, eur=True):
             return w
-    return next((w for w in items if w.get("iban")), None)
+    for w in items:
+        if _is(w, de=True):
+            return w
+    for w in items:
+        if _is(w, eur=True):
+            return w
+    return items[0] if items else None

@@ -23,8 +23,10 @@ export default function AlertsPanel({ alerts }) {
 
       {alerts.error && (
         <div className="banner err">
-          {alerts.assumed ? 'Assumed none — ' : ''}
-          {alerts.error}
+          <div>
+            {alerts.assumed ? 'Assumed none — ' : ''}
+            {alerts.error}
+          </div>
         </div>
       )}
 

@@ -19,8 +19,10 @@ export default function SeizureCheck({ check }) {
 
       {check.error && (
         <div className="banner err">
-          {check.assumed ? 'Assumed none — ' : ''}
-          {check.error}
+          <div>
+            {check.assumed ? 'Assumed none — ' : ''}
+            {check.error}
+          </div>
         </div>
       )}
       {!check.error && check.assumed && (
