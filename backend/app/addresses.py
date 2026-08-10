@@ -32,6 +32,18 @@ _HOUSE_RE = re.compile(r"\b(\d{1,4})\s*([a-zA-Z]?)(?:\s*[-/]\s*(\d{1,4}))?\b")
 _UMLAUTS = {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"}
 # Unify the street word wherever/however it is attached.
 _STREET_WORD_RE = re.compile(r"str(?:a(?:ss|ß)e)?\.?", re.IGNORECASE)
+# Floor/unit noise that BO addresses often carry ("II OG, Am Hehsel 38",
+# "c/o Steuerbüro Meyer, Hauptstr. 1", "Whg. 4"): stripped before comparing.
+_UNIT_TOKENS = frozenset({
+    "og", "eg", "dg", "hh", "etage", "stock", "stockwerk", "geschoss",
+    "whg", "wohnung", "app", "apartment", "appartement", "zi", "zimmer",
+    "c", "o", "co", "bei", "raum", "buero", "haus", "geb", "gebaeude",
+    "i", "ii", "iii", "iv", "v", "vi", "links", "rechts", "re", "li",
+})
+
+
+def _street_tokens(s: str) -> list[str]:
+    return [t for t in _norm_street(s).split() if t not in _UNIT_TOKENS]
 
 
 def _fold(s: str) -> str:
@@ -143,19 +155,26 @@ def compare_addresses(ticket_raw: str, bo_addr) -> dict:
         return {**out, "grade": MISMATCH,
                 "detail": f"postcode differs ({t['postcode']} vs {b['postcode']})"}
 
-    ts, bs = _norm_street(t["street"]), _norm_street(b["street"])
+    t_tokens, b_tokens = _street_tokens(t["street"]), _street_tokens(b["street"])
+    ts, bs = " ".join(t_tokens), " ".join(b_tokens)
     if not ts or not bs:
         return {**out, "grade": WEAK, "detail": "postcode matches; street not comparable"}
 
     ratio = difflib.SequenceMatcher(None, ts, bs).ratio()
+    # Containment: the shorter street fully inside the longer one (extra
+    # prefixes like c/o lines or building names must not break the match).
+    short, long_ = (t_tokens, b_tokens) if len(ts) <= len(bs) else (b_tokens, t_tokens)
+    contained = (len(" ".join(short)) >= 5 and short
+                 and all(tok in long_ for tok in short))
     houses_conflict = bool(t["houses"] and b["houses"] and not (t["houses"] & b["houses"]))
 
-    if ratio >= 0.85:
+    if ratio >= 0.85 or contained:
         if houses_conflict:
             return {**out, "grade": WEAK,
                     "detail": f"street matches (sim {ratio:.2f}) but house number differs"}
         return {**out, "grade": STRONG,
-                "detail": f"postcode + street match (sim {ratio:.2f})"}
+                "detail": "postcode + street match "
+                          + (f"(sim {ratio:.2f})" if ratio >= 0.85 else "(street contained)")}
     if ratio <= 0.55:
         return {**out, "grade": MISMATCH,
                 "detail": f"same postcode but clearly different street (sim {ratio:.2f})"}

@@ -32,7 +32,8 @@ def build_trace(d: dict, include_document: bool = False) -> dict:
             "matched_by": acc.get("matched_by"),
             "needs_selection": acc.get("needs_selection"),
             "candidates": [
-                {"id": c.get("id"), "businessName": c.get("businessName")}
+                {"id": c.get("id"), "businessName": c.get("businessName"),
+                 "regNumber": c.get("regNumber"), "note": c.get("note")}
                 for c in (acc.get("candidates") or [])
             ],
             "account_type": acc.get("account_type"),

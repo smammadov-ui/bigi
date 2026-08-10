@@ -324,6 +324,8 @@ def _disambiguate_same_name(client, parsed: dict, exact_items: list[dict],
         reasons.append(f"{len(strong)} same-name candidates with matching addresses — operator picks")
     else:
         reasons.append("several same-name candidates, none with a matching address — operator picks")
+    _rank = {STRONG: 0, WEAK: 1, UNKNOWN: 2, MISMATCH: 3}
+    graded.sort(key=lambda pair: _rank.get(pair[1]["grade"], 9))
     graded_candidates = [
         {**_candidate(it),
          "note": f"address: {ac['grade']}"

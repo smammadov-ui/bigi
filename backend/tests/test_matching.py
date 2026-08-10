@@ -569,3 +569,28 @@ def test_fuzzy_noise_capped_at_12():
     assert out["needs_selection"] is True
     assert len(out["candidates"]) == 12
     assert "first 12 of 30" in (out["error"] or "")
+
+
+def test_same_name_floor_prefix_still_disambiguates():
+    # FPOPCL-31056: the right record's BO street carries a floor prefix.
+    items = _elbstar_items()
+    addr = {items[0]["id"]: {},                              # onboarding shell, no address
+            items[1]["id"]: {"street": "II OG, Am Hehsel 38",
+                             "postCode": "22339", "city": "Hamburg"},
+            items[2]["id"]: ELSEWHERE, items[3]["id"]: ELSEWHERE}
+    out = match_account(_stub_with_overviews(items, addr), _elbstar_fields())
+    assert out["company_uuid"] == items[1]["id"]
+    assert out["outcome"] == "MATCH"
+
+
+def test_annotated_picker_sorted_by_grade():
+    items = _elbstar_items()
+    addr = {items[0]["id"]: ELSEWHERE,                       # mismatch
+            items[1]["id"]: {},                              # unknown
+            items[2]["id"]: {"postCode": "22339"},           # weak (street missing)
+            items[3]["id"]: {"postCode": "22339"}}           # weak
+    out = match_account(_stub_with_overviews(items, addr), _elbstar_fields())
+    assert out["needs_selection"] is True
+    notes = [c["note"] for c in out["candidates"]]
+    assert notes[0].startswith("address: weak")
+    assert notes[-1].startswith("address: mismatch")

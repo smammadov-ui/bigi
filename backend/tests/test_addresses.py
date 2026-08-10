@@ -68,3 +68,25 @@ def test_fixture_zip_key_supported():
 def test_display_strings_present():
     r = compare_addresses("Hauptstr. 1, 60311 Frankfurt", _bo())
     assert "60311" in r["ticket"] and "60311" in r["account"]
+
+
+def test_floor_prefix_ignored_ii_og():
+    # Live case FPOPCL-31056: BO stores "II OG, Am Hehsel 38".
+    r = compare_addresses("Am Hehsel 38, , 22339, Hamburg",
+                          {"street": "II OG, Am Hehsel 38", "postCode": "22339",
+                           "city": "Hamburg"})
+    assert r["grade"] == "strong"
+
+
+def test_co_line_ignored():
+    r = compare_addresses("Hauptstr. 1, 60311 Frankfurt",
+                          {"street": "c/o Steuerbüro Meyer, Hauptstraße 1",
+                           "postCode": "60311", "city": "Frankfurt"})
+    assert r["grade"] == "strong"
+
+
+def test_containment_does_not_rescue_different_street():
+    r = compare_addresses("Musterweg 5, 60311 X",
+                          {"street": "II OG, Gutleutstraße", "houseNo": "5",
+                           "postCode": "60311"})
+    assert r["grade"] == "mismatch"
