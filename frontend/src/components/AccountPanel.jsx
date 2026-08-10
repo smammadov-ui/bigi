@@ -59,6 +59,14 @@ export default function AccountPanel({ account, onPick, busy }) {
 
       {account.error && <div className="banner err">{account.error}</div>}
 
+      {resolved && account.outcome === 'NO_MATCH' && (
+        <div className="banner warn">
+          A company was <strong>identified</strong> by search, but it is{' '}
+          <strong>not confirmed</strong> as the debtor — the case is treated as
+          NO MATCH (Scenario 4).
+        </div>
+      )}
+
       {resolved && (
         <>
           <div className="rail-name">{account.business_name || '—'}</div>
@@ -89,6 +97,22 @@ export default function AccountPanel({ account, onPick, busy }) {
                 )}
               </div>
             </div>
+            {account.address_check && account.address_check.grade !== 'unknown' && (
+              <div>
+                <div className="pk">address check</div>
+                <div className="pv">
+                  <span className={`badge ${account.address_check.grade === 'strong' ? 'ok' : account.address_check.grade === 'mismatch' ? 't2' : 'warn'}`}>
+                    {account.address_check.grade}
+                  </span>{' '}
+                  {account.address_check.detail}
+                  <div className="muted small" style={{ marginTop: 4 }}>
+                    ticket: {account.address_check.ticket || '—'}
+                    <br />
+                    account: {account.address_check.account || '—'}
+                  </div>
+                </div>
+              </div>
+            )}
             {account.seized_iban && (
               <div>
                 <div className="pk">seized IBAN</div>

@@ -43,6 +43,7 @@ def build_trace(d: dict, include_document: bool = False) -> dict:
             "has_dob": bool(acc.get("dob")),
             "wallet_iban_count": len(acc.get("ibans") or []),
             "seized_iban_source": acc.get("seized_iban_source"),
+            "address_check": acc.get("address_check"),
             "error": acc.get("error"),
             "reasons": acc.get("reasons"),
         } if acc else None,

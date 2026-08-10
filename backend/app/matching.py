@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import re
 
+from .addresses import MISMATCH, STRONG, UNKNOWN, WEAK, compare_addresses
 from .bo_client import BOError
 from .formatting import iso_date_any
 from .schemas import AccountStatusBucket, MatchOutcome
@@ -326,6 +327,7 @@ def _base(**over) -> dict:
         # wallets_error != None means the read FAILED (balance unknown, not 0).
         "wallets_items": [], "wallets_error": None,
         "seized_iban": "", "seized_iban_source": None, "main_wallet": None,
+        "address_check": None,
     }
     out.update(over)
     return out
@@ -557,66 +559,92 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
             main_wallet = {"id": w.get("id"), "iban": seized_iban, "name": w.get("name")}
             reasons.append(f"seized_iban derived from the account's {w.get('name', '?')!r} wallet")
 
-    # --- confirmation (match priority) ----------------------------------------
-    # "Comparable data" is what BO actually offers to check the identity
-    # against, per account type. Closed accounts routinely have NO wallets and
-    # a bare overview — absence of data must not be treated as a mismatch when
-    # the identity itself came from a strong key (definitive ticket UUID,
-    # operator selection, wallet-IBAN ownership, register number, or an IBAN
-    # search hit — BO itself resolved that key to this company). A NAME search
-    # hit stays weak: without comparable data it remains NO_MATCH.
+    # --- confirmation (match priority, graded addresses) -----------------------
+    # Address comparison is GRADED (see app.addresses): strong confirms, weak
+    # needs a key identity, mismatch rejects — fuzzy similarity can upgrade
+    # weak->strong but never rescue a hard mismatch. "Comparable data" is what
+    # BO actually offers per account type; closed accounts routinely have NO
+    # wallets and a bare overview — absence of data must not be treated as a
+    # mismatch when the identity came from a strong KEY (definitive ticket
+    # UUID, operator selection, wallet-IBAN ownership, register number, IBAN
+    # search hit). An exact-NAME identity is accepted on missing data only for
+    # non-OPEN accounts (an open account should have data; its absence plus a
+    # doppelgänger-prone name match goes to the operator instead).
     outcome = MatchOutcome.NO_MATCH.value
     matched_by = "none"
     ticket_provided_iban = (parsed.get("seized_iban") or "").strip()
     ticket_dob = (parsed.get("debtor_dob") or "").strip()
     norm_ibans = {_norm_iban(i) for i in ibans}
-    strong_identity = ident.get("identified_by") in (
-        "manual", "ticket_uuid", "wallet_iban", "register_number", "iban"
-    ) or bool(ident.get("name_exact"))   # full normalized-name equality
+    key_identity = ident.get("identified_by") in (
+        "manual", "ticket_uuid", "wallet_iban", "register_number", "iban")
+    strong_identity = key_identity or bool(ident.get("name_exact"))
+
+    addr = compare_addresses(parsed.get("debtor_address", ""), overview.get("address"))
+    reasons.append(f"address check: {addr['grade']} — {addr['detail']} "
+                   f"(ticket: {addr['ticket'] or '—'} | account: {addr['account'] or '—'})")
 
     if account_type == "Company":
-        comparable = bool(norm_ibans) or bool(account_address)
-    else:  # Freelancer or unknown
-        comparable = bool(norm_ibans) or bool(account_address) or bool(dob)
+        comparable = bool(norm_ibans) or addr["grade"] != UNKNOWN
+    else:  # Freelancer or unknown type
+        comparable = bool(norm_ibans) or addr["grade"] != UNKNOWN or bool(dob)
+
+    dob_match = bool(ticket_dob) and bool(dob) and _norm(ticket_dob) == _norm(dob)
 
     if ticket_provided_iban and _norm_iban(ticket_provided_iban) in norm_ibans:
         outcome, matched_by = MatchOutcome.MATCH.value, "iban"
         reasons.append("IBAN match (overrides name/address)")
-    elif account_type == "Company":
-        if _addr_match(parsed.get("debtor_address", ""), account_address):
-            outcome, matched_by = MatchOutcome.MATCH.value, "address"
-            reasons.append("Company: address (postcode) match")
-        else:
-            reasons.append("Company: address mismatch -> NO_MATCH")
-    elif account_type == "Freelancer":
-        if _addr_match(parsed.get("debtor_address", ""), account_address):
-            outcome, matched_by = MatchOutcome.MATCH.value, "address"
-            reasons.append("Freelancer: address match")
-        elif ticket_dob and _norm(ticket_dob) == _norm(dob):
-            outcome, matched_by = MatchOutcome.MATCH.value, "dob"
-            reasons.append("Freelancer: DOB match")
-        else:
-            reasons.append("Freelancer: address AND DOB mismatch -> NO_MATCH")
+    elif addr["grade"] == STRONG:
+        outcome, matched_by = MatchOutcome.MATCH.value, "address"
+        reasons.append(f"{account_type or 'unknown type'}: street-level address match")
+    elif addr["grade"] == WEAK and key_identity:
+        outcome, matched_by = MatchOutcome.MATCH.value, "address"
+        reasons.append(
+            f"{account_type or 'unknown type'}: weak address evidence accepted — "
+            f"identity from strong key {ident.get('identified_by')!r}")
+    elif account_type == "Freelancer" and dob_match:
+        # Spec: a Freelancer is NON-MATCH only when address AND DOB both fail —
+        # DOB confirms even across an address mismatch (people move).
+        outcome, matched_by = MatchOutcome.MATCH.value, "dob"
+        reasons.append("Freelancer: DOB match"
+                       + (" (address differs — person may have moved)"
+                          if addr["grade"] == MISMATCH else ""))
+    elif account_type not in ("Company", "Freelancer") and dob_match:
+        outcome, matched_by = MatchOutcome.MATCH.value, "dob"
+        reasons.append(f"unknown account type {account_type!r}: DOB match")
+    elif addr["grade"] == WEAK:
+        # Postcode agrees but the street is inconclusive and the identity is
+        # name-only: the operator decides (never guess a doppelgänger).
+        reasons.append("weak address evidence with a name-only identity — operator must confirm")
+        current = {"id": company_uuid, "businessName": business_name,
+                   "regNumber": (item.get("regNumber", "") if isinstance(item, dict) else "")}
+        return _base(candidates=[current], needs_selection=True,
+                     error=("the identified company's address only partially matches the "
+                            "ticket (postcode agrees, street inconclusive) — confirm it is "
+                            "the debtor or enter the right company UUID"),
+                     reasons=reasons, seized_iban=seized_iban, address_check=addr)
     else:
-        # Unknown type (closed/onboarding accounts often lose it): apply the
-        # lenient rule — any positive address/DOB evidence confirms.
-        if _addr_match(parsed.get("debtor_address", ""), account_address):
-            outcome, matched_by = MatchOutcome.MATCH.value, "address"
-            reasons.append(f"unknown account type {account_type!r}: address match")
-        elif ticket_dob and dob and _norm(ticket_dob) == _norm(dob):
-            outcome, matched_by = MatchOutcome.MATCH.value, "dob"
-            reasons.append(f"unknown account type {account_type!r}: DOB match")
-        else:
-            reasons.append(f"unknown account type {account_type!r} and no positive evidence -> NO_MATCH")
+        reasons.append(f"{account_type or 'unknown type'}: address {addr['grade']} -> NO_MATCH")
 
     if outcome == MatchOutcome.NO_MATCH.value and strong_identity and not comparable:
-        # Nothing to compare against (typical for a CLOSED account) and the
-        # identity came from a strong key -> accept it, with a visible reason.
-        outcome = MatchOutcome.MATCH.value
-        matched_by = ident.get("identified_by") or "strong_identity"
-        reasons.append(
-            "no comparable IBAN/address/DOB data in BO (closed account?) — "
-            f"identity accepted from {ident.get('identified_by')!r}")
+        if key_identity or bucket != AccountStatusBucket.OPEN.value:
+            # Nothing to compare against (typical for a CLOSED account) and the
+            # identity is strong -> accept it, with a visible reason.
+            outcome = MatchOutcome.MATCH.value
+            matched_by = ident.get("identified_by") or "strong_identity"
+            reasons.append(
+                "no comparable IBAN/address/DOB data in BO (closed account?) — "
+                f"identity accepted from {ident.get('identified_by')!r}")
+        else:
+            # Exact-name hit on an OPEN account with no data to compare: an
+            # open account should have data — the operator confirms instead.
+            reasons.append("exact-name identity on an OPEN account without comparable data — operator must confirm")
+            current = {"id": company_uuid, "businessName": business_name,
+                       "regNumber": (item.get("regNumber", "") if isinstance(item, dict) else "")}
+            return _base(candidates=[current], needs_selection=True,
+                         error=("found a company with exactly the ticket's name, but the "
+                                "account carries no address/IBAN/DOB to verify against — "
+                                "confirm it is the debtor"),
+                         reasons=reasons, seized_iban=seized_iban, address_check=addr)
 
     # --- person-vs-company override (Scenario 5) -------------------------------
     # A request against a physical person whose resolved account is a Company.
@@ -655,13 +683,19 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
         account_address=account_address, dob=dob, ibans=ibans, reasons=reasons,
         wallets_items=wallets_items, wallets_error=wallets_error, seized_iban=seized_iban,
         seized_iban_source=seized_iban_source, main_wallet=main_wallet,
+        address_check=addr,
     )
 
 
 def _pick_main_wallet(wallets_items: list[dict]):
-    """The account's Main wallet: prefer a wallet literally named 'Main', else
-    the first wallet with an IBAN."""
-    for w in wallets_items or []:
+    """The account's Main wallet: prefer a wallet literally named 'Main', then
+    the first EUR wallet with an IBAN (a §840 declaration should never quote a
+    USD wallet's IBAN), then any wallet with an IBAN."""
+    items = wallets_items or []
+    for w in items:
         if str(w.get("name", "")).strip().lower() == "main" and w.get("iban"):
             return w
-    return next((w for w in wallets_items or [] if w.get("iban")), None)
+    for w in items:
+        if str(w.get("currency") or "").strip().upper() == "EUR" and w.get("iban"):
+            return w
+    return next((w for w in items if w.get("iban")), None)

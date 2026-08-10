@@ -390,3 +390,74 @@ def test_iban_name_mismatch_without_name_hit_proceeds_with_warning():
     out = match_account(stub, f)
     assert out["company_uuid"] == UUID
     assert any("does not match the ticket's debtor name" in r for r in out["reasons"])
+
+
+# --- graded address comparison (FPOPCL-30939 class) --------------------------------
+
+
+def test_same_postcode_different_street_is_no_match():
+    # Doppelgänger with the SAME postcode: postcode-only used to bless this.
+    fx = company(address={"street": "Gutleutstraße", "houseNo": "99",
+                          "postCode": "60311", "city": "Frankfurt"})
+    f = fields(seized_iban="", debtor_address="Musterweg 5, 60311, , Frankfurt")
+    out = match_account(StubBO(fixtures={UUID: fx}), f)
+    assert out["outcome"] == "NO_MATCH"
+    assert any("different street" in r for r in out["reasons"])
+    assert out["address_check"]["grade"] == "mismatch"
+
+
+def test_weak_address_with_key_identity_matches():
+    # Postcode agrees, street missing in BO; identity via definitive ticket UUID.
+    fx = company(address={"postCode": "60311", "city": "Frankfurt"})
+    f = fields(seized_iban="")
+    out = match_account(StubBO(fixtures={UUID: fx}), f)
+    assert out["outcome"] == "MATCH"
+    assert out["matched_by"] == "address"
+    assert any("weak address evidence accepted" in r for r in out["reasons"])
+
+
+def test_weak_address_with_name_identity_goes_to_picker():
+    fx = company(address={"postCode": "60311", "city": "Frankfurt"})
+    f = fields(company_uuid="", seized_iban="", debtor_register_number="")
+    stub = StubBO(fixtures={UUID: fx}, search_map={"ACME GmbH": UUID})
+    out = match_account(stub, f)
+    assert out["needs_selection"] is True
+    assert [c["id"] for c in out["candidates"]] == [UUID]
+    assert "partially matches" in (out["error"] or "")
+
+
+def test_exact_name_open_account_without_data_goes_to_picker():
+    # OPEN account with nothing to compare + exact-name identity -> operator.
+    fx = company(wallets=[])
+    fx["overview"] = {}
+    fx["cdd"] = {}
+    f = fields(company_uuid="", seized_iban="", debtor_register_number="")
+    stub = StubBO(fixtures={UUID: fx}, search_map={"ACME GmbH": UUID})
+    out = match_account(stub, f)
+    assert out["needs_selection"] is True
+    assert "no address/IBAN/DOB to verify" in (out["error"] or "")
+
+
+def test_exact_name_closed_account_without_data_still_accepted():
+    # Regression: NOV Energys class must keep working (CLOSED bucket).
+    fx = company(status="AccountClosed", updated="2026-01-05T00:00:00Z", wallets=[])
+    fx["overview"] = {}
+    fx["cdd"] = {}
+    fx["short_info"] = {"id": UUID, "businessName": "ACME GmbH",
+                        "status": {"accountStatus": "AccountClosed"}}
+    f = fields(company_uuid="", seized_iban="", debtor_register_number="")
+    stub = StubBO(fixtures={UUID: fx}, search_map={"ACME GmbH": UUID})
+    out = match_account(stub, f)
+    assert out["outcome"] == "MATCH"
+    assert out["status_bucket"] == "CLOSED"
+
+
+def test_main_wallet_prefers_eur():
+    fx = company(wallets=[
+        {"id": "w1", "iban": "US00USD", "name": "USD", "balance": 1.0, "currency": "USD"},
+        {"id": "w2", "iban": "DE00EUR", "name": "Zweit", "balance": 1.0, "currency": "EUR"},
+    ])
+    f = fields(seized_iban="")
+    out = match_account(StubBO(fixtures={UUID: fx}), f)
+    assert out["seized_iban"] == "DE00EUR"
+    assert out["main_wallet"]["iban"] == "DE00EUR"
