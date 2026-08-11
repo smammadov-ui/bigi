@@ -250,6 +250,12 @@ def _run_checks_and_compose(db: Session, client, raw_text: str, parsed: dict,
         client, uuid, ticket_case_ref=fields.get("case_references", ""))
     if sc.get("error") and uuid:
         warnings.append(f"seizures: {sc['error']}")
+    own_rows = sc.get("ignored_same_case") or []
+    if len(own_rows) > 1:
+        warnings.append(
+            f"{len(own_rows)} BO seizures matched this ticket's case reference "
+            f"({', '.join(str(r.get('caseNumber') or r.get('id')) for r in own_rows)}) — "
+            "verify they are all truly this case (possible duplicate or reference collision)")
     if sc.get("ignored_later"):
         warnings.append(
             f"{len(sc['ignored_later'])} junior Processing seizure(s) excluded (created after this case)")

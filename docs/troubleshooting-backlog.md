@@ -1,9 +1,9 @@
 # Troubleshooting backlog — confirmed findings awaiting "go ahead"
 
-*Collected during live case triage. No code changes yet — implementation starts
-on explicit go-ahead, batched, with regression tests per item.*
+*Collected during live case triage; items are implemented in batches on
+explicit go-ahead, with regression tests per item.*
 
-## 1. `same_case` middle-segment collision → competing seizure missing from T2 ⚠️ legal impact
+## 1. `same_case` middle-segment collision → competing seizure missing from T2 ⚠️ legal impact — ✅ IMPLEMENTED
 
 **Case:** FPOPCL-31227 (Simons GmbH & Co. KG, `52603609-a984-…`).
 

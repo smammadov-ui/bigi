@@ -51,8 +51,14 @@ def build_trace(d: dict, include_document: bool = False) -> dict:
         "alerts": d.get("alerts"),
         "seizures": {
             "processing_count": sc.get("processing_count"),
+            "competing_cases": [str(s.get("caseNumber") or s.get("id"))
+                                for s in (sc.get("seizures") or [])],
             "ignored_same_case": len(sc.get("ignored_same_case") or []),
+            "own_case_numbers": [str(s.get("caseNumber") or s.get("id"))
+                                 for s in (sc.get("ignored_same_case") or [])],
             "ignored_later": len(sc.get("ignored_later") or []),
+            "ignored_later_cases": [str(s.get("caseNumber") or s.get("id"))
+                                    for s in (sc.get("ignored_later") or [])],
             "own_case_missing": sc.get("own_case_missing"),
             "assumed": sc.get("assumed"),
             "error": sc.get("error"),

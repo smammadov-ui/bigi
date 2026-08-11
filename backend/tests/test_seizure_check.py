@@ -398,3 +398,55 @@ def test_open_alert_rules_normalizes_variants():
         {"rules": ["MNL-20-XX"], "resolvedOn": "2026-01-01"},  # resolved -> ignored
     ]
     assert open_alert_rules(items) == {"MNL21", "MNL22"}
+
+
+# --- FPOPCL-31227: middle-segment reference collision -------------------------------
+
+
+JUNE_AOK = ("document_id: 61c5d30b-7a80-498e-9340-2de4c34f700d | "
+            "case_reference: V00001726483-82611302-57223")
+
+
+def test_middle_segment_does_not_match():
+    # 82611302 is AOK's customer number INSIDE the reference — a different
+    # case of the same creditor must stay a competing seizure.
+    assert same_case(JUNE_AOK, "82611302") is False
+
+
+def test_full_case_reference_still_matches_porters_combo():
+    assert same_case(JUNE_AOK, "V00001726483-82611302-57223") is True
+
+
+def test_segment_prefix_matches():
+    assert same_case("82611302 - Mahnung 2026", "82611302") is True
+
+
+def test_segment_suffix_matches():
+    assert same_case("2614/239/24045 - VO 05 - 12619/26 F", "12619/26 F") is True
+
+
+def test_collapsed_edge_fallback_requires_length():
+    # >= 10 collapsed chars may match at the string edge without separators…
+    assert same_case("V0000172648382611302X", "V00001726483") is True
+    # …but short refs never match mid-string or cross-boundary.
+    assert same_case("40846420253420", "846420") is False
+
+
+def test_middle_segments_sequence_does_not_match():
+    # Even a multi-segment run in the MIDDLE must not match.
+    assert same_case("A1 - 82611302 - 57223 - B2", "82611302-57223") is False
+
+
+def test_own_case_check_excludes_only_edge_matches():
+    seizures = [{"id": "own", "status": "Processing"},
+                {"id": "aok", "status": "Processing"}]
+    details = {
+        "own": {"id": "own", "status": "Processing", "created": "2026-08-11",
+                "caseNumber": "82611302"},
+        "aok": {"id": "aok", "status": "Processing", "created": "2026-06-25",
+                "caseNumber": JUNE_AOK, "issuedBy": "AOK Hessen", "amount": 36017.92},
+    }
+    out = check_ongoing_seizures(FakeClient(seizures=seizures, details=details),
+                                 "u1", ticket_case_ref="82611302")
+    assert [s["id"] for s in out["ignored_same_case"]] == ["own"]
+    assert [s["id"] for s in out["seizures"]] == ["aok"]     # competing, in the letter

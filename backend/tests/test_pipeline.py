@@ -218,3 +218,18 @@ def test_no_match_endpoint_flag(monkeypatch, client):
                        json={"raw_text": raw_ticket(), "no_match": True})
     assert resp.status_code == 200
     assert resp.json()["scenario"] == "S4_IBAN"
+
+
+def test_duplicate_own_case_rows_warn(monkeypatch, db, client):
+    own_a = {"id": 1, "caseNumber": "261423924045VO05", "status": "Processing",
+             "created": "2026-02-01"}
+    own_b = {"id": 2, "caseNumber": "2614/239/24045 - VO 05", "status": "Processing",
+             "created": "2026-02-02"}
+    fx = company(seizures=[own_a, own_b],
+                 details={1: {**own_a, "seizedAmount": 10.0},
+                          2: {**own_b, "seizedAmount": 20.0}})
+    stub = StubBO(fixtures={UUID: fx})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    r = pipeline.run_pipeline(db, raw_ticket())
+    assert len(r["seizure_check"]["ignored_same_case"]) == 2
+    assert any("possible duplicate or reference collision" in w for w in r["warnings"])

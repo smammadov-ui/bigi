@@ -104,21 +104,54 @@ def _norm_case(s) -> str:
     return _NON_ALNUM_RE.sub("", str(s or "").lower())
 
 
+_SEGMENT_RE = re.compile(r"[a-z0-9]+")
+
+
+def _case_segments(s) -> list[str]:
+    """Reference split into alphanumeric segments (separator-aware)."""
+    return _SEGMENT_RE.findall(str(s or "").lower())
+
+
 def same_case(bo_case_number, ticket_case_ref) -> bool:
     """True if a BO ``caseNumber`` refers to the same case as the ticket's ref.
 
-    Both are normalised (alphanumerics only, lowercased); a match is exact OR
-    full-string containment either way (so a ticket carrying only the short tail,
-    or BO carrying an extra suffix, still matches). Containment is on the WHOLE
-    normalised strings — a shared court prefix alone does NOT match, because the
-    differing tails break the substring test. Guarded by a min length so short
-    fragments can't match by accident. Empty ref -> never matches (safe default).
+    Matching rules (FPOPCL-31227 hardening — a shared MIDDLE segment must not
+    match: ``82611302`` is AOK's customer number inside
+    ``V00001726483-82611302-57223`` and is common to ALL of that creditor's
+    cases against the debtor):
+
+    1. Full normalized equality (alphanumerics only, lowercased) — covers
+       formatting variants ("2614/239…F" == "261423924045…F").
+    2. EDGE containment on segment boundaries: the shorter ref's complete
+       segment sequence is the PREFIX or SUFFIX of the longer one — covers a
+       ticket carrying only the court tail ("12619/26 F" ⊂ "… - VO 05 -
+       12619/26 F") and a full ``case_reference:`` value inside Porters'
+       "document_id: … | case_reference: …" combo.
+    3. Collapsed-string edge fallback for LONG refs (>= 10 chars) — covers BO
+       values stored without separators.
+
+    A middle-of-string hit never matches. Guarded by a min length so short
+    fragments can't match by accident. Empty ref -> never matches.
     """
     b = _norm_case(bo_case_number)
     t = _norm_case(ticket_case_ref)
     if len(b) < _MIN_MATCH_LEN or len(t) < _MIN_MATCH_LEN:
         return False
-    return b in t or t in b
+    if b == t:
+        return True
+
+    b_seg = _case_segments(bo_case_number)
+    t_seg = _case_segments(ticket_case_ref)
+    shorter, longer = (t_seg, b_seg) if len(t) <= len(b) else (b_seg, t_seg)
+    n = len(shorter)
+    if n and len(longer) >= n and len("".join(shorter)) >= _MIN_MATCH_LEN:
+        if longer[:n] == shorter or longer[-n:] == shorter:
+            return True
+
+    shorter_c, longer_c = (t, b) if len(t) <= len(b) else (b, t)
+    if len(shorter_c) >= 10 and (longer_c.startswith(shorter_c) or longer_c.endswith(shorter_c)):
+        return True
+    return False
 
 
 def seizure_description_de(detail: dict) -> str:
