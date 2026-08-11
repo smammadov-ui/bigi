@@ -153,8 +153,10 @@ def test_declaration_endpoint_empty_400(client):
 def test_single_comment_uuid_resolves_company(monkeypatch, db, client):
     stub = StubBO(fixtures={UUID: company()})
     monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
-    f = fields(company_uuid="", seized_iban="", debtor_register_number="",
-               debtor_name="Unknown Ltd")      # nothing findable by search
+    f = fields(company_uuid="", seized_iban="", debtor_register_number="")
+    # (name search finds nothing in this stub — the comment UUID must resolve;
+    # the debtor name still has to AGREE with the account per the analyst
+    # identification matrix, so it stays the fixture default "ACME GmbH")
     r = pipeline.run_pipeline(db, raw_ticket(f), comment_uuids=[UUID])
     assert r["account"]["company_uuid"] == UUID
     assert r["account"]["identified_by"] == "ticket_uuid"

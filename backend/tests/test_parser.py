@@ -330,3 +330,17 @@ def test_norm_reg_none_and_empty():
     assert norm_reg(None) == ""
     assert norm_reg("") == ""
     assert norm_reg("   ") == ""
+
+
+def test_plural_match_labels_in_description():
+    # Porters also write the PLURAL "Definitive matches:" (FPOPCL-31102).
+    from app.parser import parse_jira
+
+    out = parse_jira(
+        "We received a seizure for X.\n"
+        "* case references: 1/2/3\n"
+        "* seizure amount: 10.00\n"
+        "* date received: 2026-08-07\n"
+        "* debtor name: X GmbH\n"
+        "* definitive matches: 27e657bd-f807-4654-9c93-92687d8b0fbb\n")
+    assert out["fields"]["company_uuid"] == "27e657bd-f807-4654-9c93-92687d8b0fbb"

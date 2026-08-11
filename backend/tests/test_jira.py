@@ -288,8 +288,9 @@ def test_fetch_comment_match_uuids(monkeypatch):
     monkeypatch.setattr(jira_mod.httpx, "get", fake_get)
     cfg = {"base_url": "https://x.atlassian.net", "email": "e@x", "api_token": "t"}
     out = jira_mod.fetch_comment_match_uuids(cfg, "FPOPCL-1")
-    assert out == ["11111111-1111-1111-1111-111111111111",
-                   "22222222-2222-2222-2222-222222222222"]
+    # Tiered: the labeled definitive UUID wins outright over the bare one
+    # found in the other comment (FPOPCL-31102).
+    assert out == ["11111111-1111-1111-1111-111111111111"]
 
 
 def test_fetch_comment_match_uuids_failure_is_empty(monkeypatch):
@@ -301,3 +302,40 @@ def test_fetch_comment_match_uuids_failure_is_empty(monkeypatch):
     monkeypatch.setattr(jira_mod.httpx, "get", fake_get)
     cfg = {"base_url": "https://x.atlassian.net", "email": "e@x", "api_token": "t"}
     assert jira_mod.fetch_comment_match_uuids(cfg, "FPOPCL-1") == []
+
+
+def test_seizure_url_uuids_are_ignored():
+    from app.jira import extract_match_uuid_tiers, extract_match_uuids
+
+    seizure = ("Backoffice URL to the created seizure: "
+               "[https://inhouse.finom.co/monitoring/seizures/"
+               "44444444-4444-4444-4444-444444444444/transactions]"
+               "(https://inhouse.finom.co/monitoring/seizures/"
+               "44444444-4444-4444-4444-444444444444/transactions)")
+    assert extract_match_uuids(seizure) == []
+    # Mixed: the seizure link's UUID never competes with a real match.
+    mixed = "Definitive matches: 11111111-1111-1111-1111-111111111111\n" + seizure
+    assert extract_match_uuids(mixed) == ["11111111-1111-1111-1111-111111111111"]
+    d, p, b = extract_match_uuid_tiers(mixed)
+    assert d == ["11111111-1111-1111-1111-111111111111"]
+    assert b == ["11111111-1111-1111-1111-111111111111"]  # labeled line re-counts as bare
+
+
+def test_fetch_comment_definitive_beats_bare_across_comments(monkeypatch):
+    # FPOPCL-31102 shape: NEWEST comment is the seizure link + a bare uuid,
+    # the older one carries the labeled definitive match.
+    from app import jira as jira_mod
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        return _Resp(200, {"comments": [
+            {"body": "see also 33333333-3333-3333-3333-333333333333 and "
+                     "https://inhouse.finom.co/monitoring/seizures/"
+                     "44444444-4444-4444-4444-444444444444/transactions"},
+            {"body": "### Customer Matching\n\nDefinitive matches: "
+                     "27e657bd-f807-4654-9c93-92687d8b0fbb"},
+        ]})
+
+    monkeypatch.setattr(jira_mod.httpx, "get", fake_get)
+    cfg = {"base_url": "https://x.atlassian.net", "email": "e@x", "api_token": "t"}
+    assert jira_mod.fetch_comment_match_uuids(cfg, "FPOPCL-1") == [
+        "27e657bd-f807-4654-9c93-92687d8b0fbb"]

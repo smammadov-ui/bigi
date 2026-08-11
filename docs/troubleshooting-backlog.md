@@ -74,7 +74,7 @@ the person override → S1/T1, own-case amount declared. Regression tests:
 company-name+DOB → not a person; plain person name + DOB → still a person;
 person name + register number → not a person (unchanged).
 
-## 5. Seizure-link UUIDs in comments pollute the company candidates
+## 5. Seizure-link UUIDs in comments pollute the company candidates — ✅ IMPLEMENTED
 
 **Case:** FPOPCL-31102 (Susann Piekorz). Porters now post TWO comments:
 `### Customer Matching / Definitive matches: 27e657bd-…` and
@@ -82,7 +82,7 @@ person name + register number → not a person (unchanged).
 bigi harvested BOTH UUIDs → 2 "company" candidates → needless picker stop.
 BO confirms `fb31301a-…` 404s as a company (it is the seizure entity's ID).
 
-**Fix (pending go):** three layers in `app/jira.py` + `app/matching.py`:
+**Fix (implemented):** three layers in `app/jira.py` + `app/matching.py`:
 1. Strip URLs containing `/seizures/` from comment text BEFORE harvesting —
    those UUIDs are seizure IDs, never companies (optionally keep as an
    own-seizure link note in the trace).
@@ -95,7 +95,7 @@ BO confirms `fb31301a-…` 404s as a company (it is the seizure entity's ID).
 3. Safety net: ticket-UUID candidates whose BO lookup says company-not-found
    are dropped (with a note); exactly one valid candidate left → auto-resolve.
 
-## 6. DOB confirmation fails on date-format differences
+## 6. DOB confirmation fails on date-format differences — ✅ IMPLEMENTED
 
 **Case:** same ticket. Account CDD carries the matching birthdate — the
 `PersonBirthdate` node has empty `values` but `properties: [{name: "Date of
@@ -105,9 +105,15 @@ says `1989-08-21` and `matching.py` line ~676 compares normalized STRINGS:
 identified-but-unconfirmed → S4/T7 "ask for IBAN" even after the operator
 picked the right account.
 
-**Fix (pending go):** compare `iso_date_any(ticket_dob) == iso_date_any(dob)`
+**Fix (implemented):** compare `iso_date_any(ticket_dob) == iso_date_any(dob)`
 (both formats already supported there), falling back to the current string
 equality when either side does not parse as a date.
+
+**Bonus finding while implementing:** the label regex only accepted the
+singular "definitive match" — Porters' actual comment says "Definitive
+match**es**:", so the definitive tier never applied on 31102. Fixed
+(`match(?:es)?`), and the description parser now accepts the plural field
+keys too.
 
 **Expected after #5+#6 (FPOPCL-31102):** definitive comment UUID resolves
 Susann Piekorz directly (no picker), Freelancer confirms by DOB despite the
@@ -115,7 +121,7 @@ postcode difference (02997 Wittichenau vs 02977 Hoyerswerda — address OR DOB),
 account OPEN, own case 4103-K-PK-ZuZ/99000000024482889 with the €138,03
 Seizure wallet → **S1/T1**, no manual steps.
 
-## 7. Align confirmation with the analyst identification matrix
+## 7. Align confirmation with the analyst identification matrix — ✅ IMPLEMENTED
 
 **Source:** analyst team's accepted-identification rules (2026-08). Collapsed
 (supersets removed): **Company** = name + (address | IBAN) -> definitive.
@@ -128,7 +134,7 @@ address match confirms even when the debtor name disagrees with the account.
 Per the matrix, name agreement is a required component of EVERY definitive
 match (IBAN alone is not definitive).
 
-**Fix (pending go):**
+**Fix (implemented):**
 1. Add a name gate to confirmation in `app/matching.py`: ticket debtor name
    vs account businessName OR the CDD registered/trade name, compared with
    legal-suffix-stripped normalization (reuse `name_variants`/`_same_name`),

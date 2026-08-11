@@ -94,7 +94,8 @@ _KEY_MAP: dict[str, str] = {
 
 # Keys that carry their own value (not in _KEY_MAP) but are still real field
 # lines for the purposes of continuation detection / comment cut-off.
-_SPECIAL_KEYS = frozenset({"seized ibans", "definitive match", "potential match"})
+_SPECIAL_KEYS = frozenset({"seized ibans", "definitive match", "potential match",
+                           "definitive matches", "potential matches"})
 
 # A ``key: value`` field line. The leading bullet marker (``*``/``-``/``•``) is
 # OPTIONAL. The key allowlist gates whether a colon line is treated as a field;
@@ -296,7 +297,8 @@ def parse_jira(raw_text: str) -> dict:
     # debtor IBAN, else operator selection). None is NOT a halt — the account
     # is identified by searching on register number / seized IBAN / name.
     uuids: list[str] = []
-    for raw in (bullets.get("definitive match", ""), bullets.get("potential match", "")):
+    for raw in (bullets.get("definitive match", ""), bullets.get("definitive matches", ""),
+                bullets.get("potential match", ""), bullets.get("potential matches", "")):
         for token in _IBAN_SPLIT_RE.split(raw.strip()):
             if not token:
                 continue

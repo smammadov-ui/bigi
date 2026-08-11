@@ -109,9 +109,32 @@ _ISSUE_KEY_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*-\d+")
 _UUID_TOKEN_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
 )
+# Porters write both "Definitive match: <uuid>" and "Definitive matches:
+# <uuid>" (plural — live case FPOPCL-31102).
 _LABELED_MATCH_RE = re.compile(
-    r"(definitive|potential)\s+match\b[^\n]*", re.IGNORECASE
+    r"(definitive|potential)\s+match(?:es)?\b[^\n]*", re.IGNORECASE
 )
+# Back-Office SEIZURE links Porters post in comments ("Backoffice URL to the
+# created seizure: https://inhouse.finom.co/monitoring/seizures/<id>/..."):
+# the UUID in such a URL is the seizure entity's ID, never a company.
+_SEIZURE_URL_RE = re.compile(r"https?://\S*/seizures/\S*", re.IGNORECASE)
+
+
+def extract_match_uuid_tiers(text: str) -> tuple[list[str], list[str], list[str]]:
+    """``(definitive, potential, bare)`` company-UUID tiers from free text.
+
+    UUIDs inside Back-Office seizure URLs are stripped BEFORE harvesting —
+    they are seizure entity IDs, not companies (live case FPOPCL-31102, where
+    the seizure link's UUID became a bogus picker candidate).
+    """
+    text = _SEIZURE_URL_RE.sub(" ", str(text or ""))
+    definitive: list[str] = []
+    potential: list[str] = []
+    for m in _LABELED_MATCH_RE.finditer(text):
+        bucket = definitive if m.group(1).lower() == "definitive" else potential
+        bucket.extend(u.lower() for u in _UUID_TOKEN_RE.findall(m.group(0)))
+    bare = [u.lower() for u in _UUID_TOKEN_RE.findall(text)]
+    return definitive, potential, bare
 
 
 def extract_match_uuids(text: str) -> list[str]:
@@ -120,14 +143,9 @@ def extract_match_uuids(text: str) -> list[str]:
     Submitters have started posting the definitive/potential match UUIDs in
     COMMENTS instead of the description. Order of trust: UUIDs on a line
     labeled "definitive match" -> "potential match" -> any bare UUID token.
+    Seizure-link UUIDs are ignored (see ``extract_match_uuid_tiers``).
     """
-    text = str(text or "")
-    definitive: list[str] = []
-    potential: list[str] = []
-    for m in _LABELED_MATCH_RE.finditer(text):
-        bucket = definitive if m.group(1).lower() == "definitive" else potential
-        bucket.extend(u.lower() for u in _UUID_TOKEN_RE.findall(m.group(0)))
-    bare = [u.lower() for u in _UUID_TOKEN_RE.findall(text)]
+    definitive, potential, bare = extract_match_uuid_tiers(text)
     out: list[str] = []
     for u in definitive + potential + bare:
         if u not in out:
@@ -138,8 +156,12 @@ def extract_match_uuids(text: str) -> list[str]:
 def fetch_comment_match_uuids(jira_cfg: dict, issue_key: str) -> list[str]:
     """Company UUIDs found in the issue's comments (read-only; [] on failure).
 
-    Newest comments win the ordering within each trust level, so a submitter's
-    correction outranks their earlier post.
+    Tiered across ALL comments: a labeled "definitive match" UUID in ANY
+    comment wins outright over "potential match" UUIDs, which win over bare
+    UUID tokens found elsewhere (Porters post the definitive match and a
+    seizure link as SEPARATE comments — live case FPOPCL-31102). Newest
+    comments win the ordering within each tier, so a submitter's correction
+    outranks their earlier post.
     """
     key = normalize_issue_ref(issue_key)
     base_url, email, api_token = _require_jira_cfg(jira_cfg)
@@ -156,14 +178,20 @@ def fetch_comment_match_uuids(jira_cfg: dict, issue_key: str) -> list[str]:
         comments = (resp.json() or {}).get("comments") or []
     except (httpx.HTTPError, ValueError):
         return []
-    out: list[str] = []
+    tiers: tuple[list[str], list[str], list[str]] = ([], [], [])
     for c in comments:
         body = c.get("body")
         text = body if isinstance(body, str) else flatten_adf(body)
-        for u in extract_match_uuids(text):
-            if u not in out:
-                out.append(u)
-    return out
+        for tier, found in zip(tiers, extract_match_uuid_tiers(text)):
+            tier.extend(found)
+    for tier in tiers:
+        dedup: list[str] = []
+        for u in tier:
+            if u not in dedup:
+                dedup.append(u)
+        if dedup:
+            return dedup
+    return []
 
 
 def normalize_issue_ref(ref: str) -> str:

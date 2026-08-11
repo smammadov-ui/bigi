@@ -603,3 +603,84 @@ def test_annotated_picker_sorted_by_grade():
     notes = [c["note"] for c in out["candidates"]]
     assert notes[0].startswith("address: weak")
     assert notes[-1].startswith("address: mismatch")
+
+
+# --- items 5/6/7 (FPOPCL-31102 + analyst identification matrix) ---------------
+
+
+def test_dob_matches_across_formats():
+    # Ticket says 1989-08-21, BO's CDD stores 21.08.1989 — same birthday.
+    fx = company(type_="Freelancer", name="Susann Piekorz", dob="21.08.1989",
+                 address={"street": "Am Bahnhofsvorplatz 7", "zip": "02977",
+                          "city": "Hoyerswerda"})
+    f = fields(seized_iban="", debtor_dob="1989-08-21", debtor_register_number="",
+               debtor_name="Susann Piekorz",
+               debtor_address="Gewerbepark 35a, 02997 Wittichenau")
+    out = match_account(StubBO(fixtures={UUID: fx}), f)
+    assert out["outcome"] == "MATCH"
+    assert out["matched_by"] == "dob"
+
+
+def test_iban_match_requires_name_agreement():
+    # Analyst matrix: IBAN alone is NOT definitive — the name must agree too.
+    f = fields(debtor_name="Voellig Andere Handels GmbH")
+    out = match_account(StubBO(fixtures={UUID: company()}), f)
+    assert out["outcome"] == "NO_MATCH"
+    assert any("not definitive per the identification rules" in r
+               for r in out["reasons"])
+
+
+def test_iban_match_tolerates_trade_name_extension():
+    # "Freelancer register name (a bit different from the main name)" counts.
+    fx = company(type_="Freelancer", name="Susann Piekorz")
+    f = fields(debtor_name="Malerbetrieb Susann Piekorz",
+               debtor_register_number="")
+    out = match_account(StubBO(fixtures={UUID: fx}), f)
+    assert out["outcome"] == "MATCH"
+    assert out["matched_by"] == "iban"
+
+
+def test_conflicting_legal_forms_never_agree():
+    # ACME UG and ACME GmbH are different legal entities.
+    f = fields(debtor_name="ACME UG")
+    out = match_account(StubBO(fixtures={UUID: company()}), f)   # ACME GmbH
+    assert out["outcome"] == "NO_MATCH"
+
+
+def test_registered_trade_name_from_cdd_counts():
+    fx = company(name="SP Design")
+    fx["cdd"]["CompanyRegisteredName"] = "Susann Piekorz Grafikdesign"
+    f = fields(seized_iban="", debtor_name="Susann Piekorz Grafikdesign",
+               debtor_register_number="")
+    out = match_account(StubBO(fixtures={UUID: fx}), f)
+    assert out["outcome"] == "MATCH"          # name (via CDD) + address
+    assert out["matched_by"] == "address"
+
+
+def test_non_company_candidate_uuids_are_dropped():
+    # FPOPCL-31102: the seizure link's UUID 404s as a company -> dropped; the
+    # single survivor resolves WITHOUT the picker.
+    bogus = "44444444-4444-4444-4444-444444444444"
+    f = fields(company_uuid="", seized_iban="",
+               company_uuid_candidates=f"{UUID}, {bogus}")
+    out = match_account(StubBO(fixtures={UUID: company()}), f)
+    assert out["needs_selection"] is False
+    assert out["company_uuid"] == UUID
+    assert out["identified_by"] == "ticket_uuid"
+    assert out["outcome"] == "MATCH"
+    assert any("not" in r and bogus in r for r in out["reasons"])
+
+
+def test_name_similarity_units():
+    from app.matching import _legal_form_key, _names_similar
+
+    assert _legal_form_key("Magcars UG (haftungsbeschränkt)") == "ug"
+    assert _legal_form_key("ACME gGmbH") == "gmbh"
+    assert _legal_form_key("ACME mbH") == "gmbh"
+    assert _legal_form_key("Susann Piekorz") == ""
+    assert _names_similar("Magcars UG (haftungsbeschränkt)", "Magcars UG")
+    assert _names_similar("Müller Bäckerei GmbH", "Baeckerei Mueller GmbH")
+    assert _names_similar("ACME GmbH", "ACME  GmbH")
+    assert not _names_similar("ACME UG", "ACME GmbH")
+    assert not _names_similar("Hamza Bosnjak", "ACME GmbH")
+    assert _names_similar("Susann Piekorz", "Malerbetrieb Susann Piekorz")

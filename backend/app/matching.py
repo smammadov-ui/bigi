@@ -31,6 +31,7 @@ operator picks or enters a UUID — the pipeline surfaces the candidates).
 """
 from __future__ import annotations
 
+import difflib
 import re
 
 from .addresses import MISMATCH, STRONG, UNKNOWN, WEAK, compare_addresses
@@ -120,6 +121,20 @@ def is_physical_person(parsed: dict) -> bool:
     return True
 
 
+def _same_dob(a, b) -> bool:
+    """Dates of birth compare on the normalized ISO date — the ticket says
+    ``1989-08-21`` while BO's CDD stores ``21.08.1989`` (live case
+    FPOPCL-31102). Falls back to plain string equality when either side does
+    not parse as a date."""
+    a, b = str(a or "").strip(), str(b or "").strip()
+    if not a or not b:
+        return False
+    ia, ib = iso_date_any(a), iso_date_any(b)
+    if ia and ib:
+        return ia == ib
+    return _norm(a) == _norm(b)
+
+
 def _flatten_address(addr) -> str:
     if isinstance(addr, dict):
         return " ".join(str(v) for v in addr.values() if isinstance(v, (str, int)))
@@ -142,25 +157,26 @@ def _harvest_strings(o, out: list[str]) -> None:
             _harvest_strings(v, out)
 
 
-def _cdd_dob(cdd: dict) -> str:
-    """Best-effort PersonBirthdate out of the nested cdd_profile (or flat stub).
+def _cdd_param_value(cdd: dict, parameter: str, flat_keys: tuple[str, ...] = ()) -> str:
+    """Best-effort value of a named parameter out of the nested cdd_profile
+    (or a flat stub key).
 
-    The real profile nests ``sections -> subSections -> parameters -> items ->
-    values``: the node carrying ``parameter == "PersonBirthdate"`` may hold its
-    values on CHILD items rather than on itself, so once such a node is found
-    its whole subtree is harvested.
+    The real profile nests ``sections -> subSections -> parameters -> items``:
+    the node carrying the ``parameter`` may hold its value on CHILD items or in
+    its ``properties`` rather than on itself (live: PersonBirthdate with empty
+    ``values`` but ``properties: [{name: "Date of Birth", value: …}]``), so
+    once such a node is found its whole subtree is harvested.
     """
     if not isinstance(cdd, dict):
         return ""
-    if cdd.get("PersonBirthdate"):
-        return str(cdd["PersonBirthdate"])
-    if cdd.get("dob"):
-        return str(cdd["dob"])
+    for k in flat_keys:
+        if cdd.get(k):
+            return str(cdd[k])
     found: list[str] = []
 
     def walk(o):
         if isinstance(o, dict):
-            if o.get("parameter") == "PersonBirthdate":
+            if o.get("parameter") == parameter:
                 _harvest_strings(o, found)   # values may sit on child items
             else:
                 for v in o.values():
@@ -171,6 +187,17 @@ def _cdd_dob(cdd: dict) -> str:
 
     walk(cdd)
     return next((f for f in found if f.strip()), "")
+
+
+def _cdd_dob(cdd: dict) -> str:
+    """Best-effort PersonBirthdate out of the nested cdd_profile (or flat stub)."""
+    return _cdd_param_value(cdd, "PersonBirthdate", ("PersonBirthdate", "dob"))
+
+
+def _cdd_registered_name(cdd: dict) -> str:
+    """Best-effort registered/trade name — counts toward name agreement per the
+    analyst identification matrix ("Freelancer register name … match")."""
+    return _cdd_param_value(cdd, "CompanyRegisteredName", ("CompanyRegisteredName",))
 
 
 def _candidate(it: dict) -> dict:
@@ -266,6 +293,74 @@ def _same_name(a, b) -> bool:
     covers BO storing 'UG  (haftungsbeschränkt)' with a double space while the
     ticket carries a single one."""
     return bool(_norm(a)) and _norm(a) == _norm(b)
+
+
+_NAME_XLIT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
+                            "Ä": "ae", "Ö": "oe", "Ü": "ue",
+                            "é": "e", "è": "e", "à": "a"})
+
+
+def _legal_form_key(name: str) -> str:
+    """Canonical legal-form family carried by a name ('' when none): 'ACME UG
+    (haftungsbeschränkt)' -> 'ug', 'ACME gGmbH'/'ACME mbH' -> 'gmbh'."""
+    m = _LEGAL_SUFFIX_RE.search(re.sub(r"\s+", " ", str(name or "")).strip())
+    if not m:
+        return ""
+    f = re.sub(r"[^a-z]", "", m.group(0).casefold())
+    for prefix, key in (("ughaftungsbeschr", "ug"), ("gmbhcokgaa", "gmbhcokgaa"),
+                        ("gmbhcokg", "gmbhcokg"), ("ggmbh", "gmbh"),
+                        ("gmbh", "gmbh"), ("mbh", "gmbh"), ("agcokg", "agcokg")):
+        if f.startswith(prefix):
+            return key
+    return f
+
+
+def _name_key_tokens(name: str) -> list[str]:
+    """Comparison tokens: legal suffixes stripped (up to two, stacked), umlauts
+    transliterated, casefolded, alphanumeric runs only."""
+    s = re.sub(r"\s+", " ", str(name or "")).strip()
+    for _ in range(2):
+        stripped = _LEGAL_SUFFIX_RE.sub("", s).strip()
+        if stripped == s:
+            break
+        s = stripped
+    s = s.translate(_NAME_XLIT).casefold()
+    return re.findall(r"[a-z0-9]+", s)
+
+
+def _names_similar(a: str, b: str) -> bool:
+    """Fuzzy-tolerant name agreement per the analyst identification matrix:
+    equal base tokens, token containment (a register/trade name that extends
+    the main name), or high string similarity (typos). Names carrying
+    CONFLICTING explicit legal forms (ACME UG vs ACME GmbH) are different
+    legal entities and never agree."""
+    fa, fb = _legal_form_key(a), _legal_form_key(b)
+    if fa and fb and fa != fb:
+        return False
+    ta, tb = set(_name_key_tokens(a)), set(_name_key_tokens(b))
+    if not ta or not tb:
+        return False
+    if ta == tb:
+        return True
+    if (ta <= tb or tb <= ta) and any(len(t) >= 3 for t in (ta & tb)):
+        return True
+    ratio = difflib.SequenceMatcher(
+        None, " ".join(sorted(ta)), " ".join(sorted(tb))).ratio()
+    return ratio >= 0.85
+
+
+def _name_agreement(ticket_name, account_names) -> tuple[bool | None, str]:
+    """(True/False/None, detail): does the ticket's debtor name agree with any
+    of the account's names? ``None`` = not comparable (a side is missing)."""
+    tn = re.sub(r"\s+", " ", str(ticket_name or "")).strip()
+    names = [re.sub(r"\s+", " ", str(n or "")).strip() for n in account_names]
+    names = [n for n in names if n]
+    if not tn or not names:
+        return None, "debtor name or account name missing"
+    for n in names:
+        if _names_similar(tn, n):
+            return True, f"ticket {tn!r} ~ account {n!r}"
+    return False, f"ticket {tn!r} vs account {', '.join(repr(n) for n in names)}"
 
 
 def _pick_search_hit(items: list[dict], kind: str, term: str, full_name: str = ""):
@@ -403,6 +498,20 @@ def _base(**over) -> dict:
     return out
 
 
+def _company_exists(client, uuid: str):
+    """True / False / None — does BO know this UUID as a company? A 404 is a
+    definitive NO (real BO: "Company with ID = … not found" — e.g. a seizure
+    entity's UUID from a Porters link). Other failures (gated 406, transient
+    5xx) prove nothing -> None, the candidate is kept."""
+    try:
+        client.cstools_short_info(uuid)
+        return True
+    except BOError as exc:
+        return False if exc.status_code == 404 else None
+    except Exception:
+        return None
+
+
 def _disambiguate_candidates(client, parsed: dict, cand_uuids: list[str], reasons: list[str]):
     """Mini's wallet-IBAN disambiguation: among several candidate UUIDs the one
     whose BO wallets own the ticket's seized/debtor IBAN is the debtor's account.
@@ -454,9 +563,22 @@ def _identify(client, parsed: dict, manual_uuid: str | None, reasons: list[str])
         return {"company_uuid": ticket_uuid, "identified_by": "ticket_uuid",
                 "business_name": ""}
 
-    # 3. Several UUIDs on the ticket -> wallet-IBAN disambiguation.
+    # 3. Several UUIDs on the ticket -> validate against BO, then wallet-IBAN
+    # disambiguation. Seizure-link UUIDs are filtered at extraction, but any
+    # candidate BO does not know as a company (404) is dropped here as the
+    # safety net — a single survivor resolves without the picker.
     cand_uuids = [u for u in _SPLIT_RE.split(str(parsed.get("company_uuid_candidates") or "")) if u]
     if len(cand_uuids) > 1:
+        valid = [u for u in cand_uuids if _company_exists(client, u) is not False]
+        dropped = [u for u in cand_uuids if u not in valid]
+        if dropped:
+            reasons.append(
+                f"ignored {len(dropped)} ticket UUID(s) BO does not know as a "
+                f"company (likely seizure/entity links): {', '.join(dropped)}")
+        if len(valid) == 1:
+            return {"company_uuid": valid[0], "identified_by": "ticket_uuid",
+                    "business_name": _lookup_name(client, valid[0])}
+        cand_uuids = valid or cand_uuids
         resolved, error = _disambiguate_candidates(client, parsed, cand_uuids, reasons)
         if resolved:
             return {"company_uuid": resolved, "identified_by": "wallet_iban",
@@ -668,34 +790,59 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
     reasons.append(f"address check: {addr['grade']} — {addr['detail']} "
                    f"(ticket: {addr['ticket'] or '—'} | account: {addr['account'] or '—'})")
 
+    # Name agreement is a REQUIRED component of every definitive match per the
+    # analyst identification matrix (2026-08): Company = name + (address|IBAN),
+    # Freelancer = name + (address|DOB|IBAN). The CDD registered/trade name
+    # counts too, and slight differences are tolerated — but conflicting
+    # explicit legal forms are different legal entities.
+    registered_name = _cdd_registered_name(cdd)
+    if ident.get("name_exact"):
+        name_ok, name_note = True, "identified by full-name equality"
+    else:
+        name_ok, name_note = _name_agreement(
+            parsed.get("debtor_name"), [business_name, registered_name])
+    reasons.append(
+        "name check: "
+        + ("agrees" if name_ok else "not comparable" if name_ok is None else "DIFFERS")
+        + f" — {name_note}")
+
     if account_type == "Company":
         comparable = bool(norm_ibans) or addr["grade"] != UNKNOWN
     else:  # Freelancer or unknown type
         comparable = bool(norm_ibans) or addr["grade"] != UNKNOWN or bool(dob)
 
-    dob_match = bool(ticket_dob) and bool(dob) and _norm(ticket_dob) == _norm(dob)
+    dob_match = _same_dob(ticket_dob, dob)
+    iban_hit = bool(ticket_provided_iban) and _norm_iban(ticket_provided_iban) in norm_ibans
 
-    if ticket_provided_iban and _norm_iban(ticket_provided_iban) in norm_ibans:
+    if iban_hit and name_ok:
         outcome, matched_by = MatchOutcome.MATCH.value, "iban"
-        reasons.append("IBAN match (overrides name/address)")
-    elif addr["grade"] == STRONG:
+        reasons.append("IBAN + name match (overrides address)")
+    elif addr["grade"] == STRONG and name_ok:
         outcome, matched_by = MatchOutcome.MATCH.value, "address"
         reasons.append(f"{account_type or 'unknown type'}: street-level address match")
-    elif addr["grade"] == WEAK and key_identity:
+    elif addr["grade"] == WEAK and key_identity and name_ok is not False:
         outcome, matched_by = MatchOutcome.MATCH.value, "address"
         reasons.append(
             f"{account_type or 'unknown type'}: weak address evidence accepted — "
             f"identity from strong key {ident.get('identified_by')!r}")
-    elif account_type == "Freelancer" and dob_match:
+    elif account_type == "Freelancer" and dob_match and name_ok:
         # Spec: a Freelancer is NON-MATCH only when address AND DOB both fail —
         # DOB confirms even across an address mismatch (people move).
         outcome, matched_by = MatchOutcome.MATCH.value, "dob"
         reasons.append("Freelancer: DOB match"
                        + (" (address differs — person may have moved)"
                           if addr["grade"] == MISMATCH else ""))
-    elif account_type not in ("Company", "Freelancer") and dob_match:
+    elif account_type not in ("Company", "Freelancer") and dob_match and name_ok:
         outcome, matched_by = MatchOutcome.MATCH.value, "dob"
         reasons.append(f"unknown account type {account_type!r}: DOB match")
+    elif iban_hit or addr["grade"] == STRONG or dob_match:
+        # A positive signal exists but the NAME gate blocked it: per the
+        # identification rules that is not definitive (e.g. the ticket's IBAN
+        # is on this account but the debtor name names someone else).
+        reasons.append(
+            "identification signal present (IBAN/address/DOB) but the debtor "
+            "name could not be positively matched to the account — not "
+            "definitive per the identification rules; operator review")
     elif addr["grade"] == WEAK:
         # Postcode agrees but the street is inconclusive and the identity is
         # name-only: the operator decides (never guess a doppelgänger).
@@ -711,7 +858,12 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
         reasons.append(f"{account_type or 'unknown type'}: address {addr['grade']} -> NO_MATCH")
 
     if outcome == MatchOutcome.NO_MATCH.value and strong_identity and not comparable:
-        if key_identity or bucket != AccountStatusBucket.OPEN.value:
+        if name_ok is False:
+            reasons.append(
+                "identity key is strong and BO offers no IBAN/address/DOB to "
+                "compare — but the debtor name DISAGREES with the account, so "
+                "the identity is not auto-accepted")
+        elif key_identity or bucket != AccountStatusBucket.OPEN.value:
             # Nothing to compare against (typical for a CLOSED account) and the
             # identity is strong -> accept it, with a visible reason.
             outcome = MatchOutcome.MATCH.value

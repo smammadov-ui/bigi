@@ -550,3 +550,23 @@ def test_company_debtor_with_dob_is_not_s5(monkeypatch, db, client):
     assert r["scenario"] == "S1"
     assert r["declaration"]["template"] == "T1"
     assert "72,62 EUR" in r["declaration"]["text"]
+
+
+def test_fpopcl_31102_shape_resolves_s1(monkeypatch, db, client):
+    """Comment carries the definitive UUID + a seizure link; DOB formats
+    differ; postcode differs (person moved) -> still S1/T1 by name+DOB."""
+    fx = company(type_="Freelancer", name="Susann Piekorz", dob="21.08.1989",
+                 address={"street": "Am Bahnhofsvorplatz 7", "zip": "02977",
+                          "city": "Hoyerswerda"},
+                 seizures=[OWN], details={9: {**OWN, "seizedAmount": 138.03}})
+    stub = StubBO(fixtures={UUID: fx})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    f = fields(company_uuid="", seized_iban="", debtor_register_number="",
+               debtor_name="Susann Piekorz", debtor_dob="1989-08-21",
+               debtor_address="Gewerbepark 35a, 02997 Wittichenau")
+    r = pipeline.run_pipeline(
+        db, raw_ticket(f),
+        comment_uuids=[UUID, "44444444-4444-4444-4444-444444444444"])
+    assert r["scenario"] == "S1"
+    assert r["declaration"]["template"] == "T1"
+    assert "138,03 EUR" in r["declaration"]["text"]

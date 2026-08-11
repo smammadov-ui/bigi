@@ -65,6 +65,10 @@ class StubBO:
     def cstools_short_info(self, company_id: str) -> dict:
         self.calls.append(("cstools_short_info", company_id))
         self._maybe_fail("cstools_short_info")
+        if company_id not in self.fixtures:
+            # Mirrors real BO: unknown UUIDs (e.g. a seizure entity's ID) 404.
+            raise BOError("cstools_short_info", 404,
+                          f"Company with ID = {company_id} not found")
         return self._fx(company_id).get("short_info", {})
 
     def cstools_overview(self, company_id: str) -> dict:
