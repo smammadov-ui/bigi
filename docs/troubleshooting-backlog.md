@@ -115,6 +115,34 @@ postcode difference (02997 Wittichenau vs 02977 Hoyerswerda — address OR DOB),
 account OPEN, own case 4103-K-PK-ZuZ/99000000024482889 with the €138,03
 Seizure wallet → **S1/T1**, no manual steps.
 
+## 7. Align confirmation with the analyst identification matrix
+
+**Source:** analyst team's accepted-identification rules (2026-08). Collapsed
+(supersets removed): **Company** = name + (address | IBAN) -> definitive.
+**Freelancer** = name + (address | DOB | IBAN) -> definitive; the register /
+trade name may differ slightly from the main name and still count.
+
+**Gap:** bigi's confirmation never checks the NAME — it is only the implicit
+search key. In the ticket-UUID / comment-UUID / manual paths an IBAN or
+address match confirms even when the debtor name disagrees with the account.
+Per the matrix, name agreement is a required component of EVERY definitive
+match (IBAN alone is not definitive).
+
+**Fix (pending go):**
+1. Add a name gate to confirmation in `app/matching.py`: ticket debtor name
+   vs account businessName OR the CDD registered/trade name, compared with
+   legal-suffix-stripped normalization (reuse `name_variants`/`_same_name`),
+   fuzzy-tolerant like the graded address check.
+2. Name agrees + (IBAN | address[strong] | DOB-for-freelancer) -> MATCH
+   (unchanged signals, now gated). Name DISAGREES + IBAN match -> not
+   definitive: surface as identified-not-confirmed (operator), with an
+   explicit "IBAN matches but name differs" reason.
+3. Notes: legal-form conflict (e.g. UG vs GmbH explicit on both sides) is a
+   warning note; tax ID is never sufficient alone (no code path needed).
+
+**Dependency:** item 6 (DOB format normalization) is REQUIRED by the matrix's
+"Freelancer name, DOB match -> definitive" rule.
+
 ## Reference — how to capture new findings
 
 `\.venv/bin/python3 scripts/case_debug.py FPOPCL-XXXXX [--company <uuid>] [--no-match]`
