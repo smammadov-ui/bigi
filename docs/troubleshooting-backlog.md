@@ -54,6 +54,26 @@ FPOPCL-31056 being filed under guide case 2). If ops declares limited accounts
 ordinary for seizure purposes, move `LimitedAccount` from RESTRICTED to OPEN
 (fresh first seizure -> S1/T1 without a human detour).
 
+## 4. False PERSON_VS_COMPANY for company debtors with a DOB on the ticket
+
+**Case:** FPOPCL-31103 (Magcars UG (haftungsbeschränkt), `d7fa3c9c-…`) → S5/T9
+instead of S1/T1.
+
+**Root cause:** `is_physical_person` = "DOB present AND no register number"
+(spec Q10a heuristic). Porters filled the LR's date of birth on a COMPANY
+debtor ticket, and the register-number field was empty → misclassified as a
+person → S5 override fired on the matched Company account.
+
+**Fix (pending go):** `app/matching.py::is_physical_person` returns False when
+the debtor NAME carries a company legal form (reuse `_LEGAL_SUFFIX_RE` — UG
+(haftungsbeschränkt), GmbH, GmbH & Co. KG, AG, KG, GbR, e.K., …), regardless
+of DOB. A company cannot have a birthday; the name is the stronger signal.
+
+**Expected after fix (FPOPCL-31103):** MATCH (IBAN + strong address) without
+the person override → S1/T1, own-case amount declared. Regression tests:
+company-name+DOB → not a person; plain person name + DOB → still a person;
+person name + register number → not a person (unchanged).
+
 ## Reference — how to capture new findings
 
 `\.venv/bin/python3 scripts/case_debug.py FPOPCL-XXXXX [--company <uuid>] [--no-match]`
