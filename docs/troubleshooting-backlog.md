@@ -74,6 +74,47 @@ the person override → S1/T1, own-case amount declared. Regression tests:
 company-name+DOB → not a person; plain person name + DOB → still a person;
 person name + register number → not a person (unchanged).
 
+## 5. Seizure-link UUIDs in comments pollute the company candidates
+
+**Case:** FPOPCL-31102 (Susann Piekorz). Porters now post TWO comments:
+`### Customer Matching / Definitive matches: 27e657bd-…` and
+`Backoffice URL to the created seizure: https://inhouse.finom.co/monitoring/seizures/fb31301a-…/transactions`.
+bigi harvested BOTH UUIDs → 2 "company" candidates → needless picker stop.
+BO confirms `fb31301a-…` 404s as a company (it is the seizure entity's ID).
+
+**Fix (pending go):** three layers in `app/jira.py` + `app/matching.py`:
+1. Strip URLs containing `/seizures/` from comment text BEFORE harvesting —
+   those UUIDs are seizure IDs, never companies (optionally keep as an
+   own-seizure link note in the trace).
+2. Tiered merge across comments: definitive > potential > bare — a labeled
+   "Definitive matches:" UUID in ANY comment wins outright; bare UUIDs from
+   other comments only matter when no labeled ones exist. (Today
+   `extract_match_uuids` flattens tiers per comment and
+   `fetch_comment_match_uuids` merges flatly, newest comment first — the
+   seizure link is the NEWER comment, so the bogus UUID even sorts first.)
+3. Safety net: ticket-UUID candidates whose BO lookup says company-not-found
+   are dropped (with a note); exactly one valid candidate left → auto-resolve.
+
+## 6. DOB confirmation fails on date-format differences
+
+**Case:** same ticket. Account CDD carries the matching birthdate — the
+`PersonBirthdate` node has empty `values` but `properties: [{name: "Date of
+Birth", value: "21.08.1989"}]` (subtree harvest picks it up) — yet the ticket
+says `1989-08-21` and `matching.py` line ~676 compares normalized STRINGS:
+`_norm("1989-08-21") != _norm("21.08.1989")` → Freelancer DOB rule failed →
+identified-but-unconfirmed → S4/T7 "ask for IBAN" even after the operator
+picked the right account.
+
+**Fix (pending go):** compare `iso_date_any(ticket_dob) == iso_date_any(dob)`
+(both formats already supported there), falling back to the current string
+equality when either side does not parse as a date.
+
+**Expected after #5+#6 (FPOPCL-31102):** definitive comment UUID resolves
+Susann Piekorz directly (no picker), Freelancer confirms by DOB despite the
+postcode difference (02997 Wittichenau vs 02977 Hoyerswerda — address OR DOB),
+account OPEN, own case 4103-K-PK-ZuZ/99000000024482889 with the €138,03
+Seizure wallet → **S1/T1**, no manual steps.
+
 ## Reference — how to capture new findings
 
 `\.venv/bin/python3 scripts/case_debug.py FPOPCL-XXXXX [--company <uuid>] [--no-match]`
