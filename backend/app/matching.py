@@ -102,8 +102,22 @@ def _addr_match(debtor_addr: str, account_addr: str) -> bool:
 
 
 def is_physical_person(parsed: dict) -> bool:
-    """A request against a physical person = DOB present AND no register number."""
-    return bool((parsed.get("debtor_dob") or "").strip()) and not (parsed.get("debtor_register_number") or "").strip()
+    """A request against a physical person = DOB present AND no register number
+    AND the debtor name carries no company legal form.
+
+    Porters sometimes fills the legal representative's date of birth on a
+    COMPANY debtor ticket (live: FPOPCL-31103, "Magcars UG (haftungs-
+    beschränkt)" with a DOB) — a company cannot have a birthday, so a legal
+    form in the name vetoes the DOB heuristic.
+    """
+    if not (parsed.get("debtor_dob") or "").strip():
+        return False
+    if (parsed.get("debtor_register_number") or "").strip():
+        return False
+    name = re.sub(r"\s+", " ", str(parsed.get("debtor_name") or "")).strip()
+    if name and _LEGAL_SUFFIX_RE.search(name):
+        return False
+    return True
 
 
 def _flatten_address(addr) -> str:

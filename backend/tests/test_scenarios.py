@@ -152,7 +152,8 @@ def test_confirmation_mismatch_is_s4(monkeypatch, db, client):
 
 
 def test_s5_person_vs_company(monkeypatch, db, client):
-    f = fields(debtor_dob="1980-05-05", debtor_register_number="")
+    f = fields(debtor_dob="1980-05-05", debtor_register_number="",
+               debtor_name="Hamza Bosnjak")
     r = run(monkeypatch, db, StubBO(fixtures={UUID: company()}), f)
     assert r["scenario"] == "S5"
     d = r["declaration"]
@@ -384,7 +385,7 @@ def test_s5_fires_on_strong_identity_despite_address_mismatch(monkeypatch, db, c
     # definitive ticket UUID -> S5, not S4.
     fx = company(address={"street": "Bürostr. 2", "zip": "99999", "city": "B"})
     f = fields(debtor_dob="1980-05-05", debtor_register_number="", seized_iban="",
-               debtor_address="Privatweg 9, 11111 A")
+               debtor_name="Hamza Bosnjak", debtor_address="Privatweg 9, 11111 A")
     stub = StubBO(fixtures={UUID: fx})
     monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
     r = pipeline.run_pipeline(db, raw_ticket(f))
@@ -397,9 +398,10 @@ def test_s5_freelancer_lookup_offers_candidates(monkeypatch, db, client):
     freelancer_item = {"id": UUID2, "businessName": "ACME GmbH", "regNumber": "",
                        "type": "Freelancer", "accountStatus": "AccountOpened"}
     stub = StubBO(fixtures={UUID: fx},
-                  search_items_map={"ACME GmbH": [freelancer_item]})
+                  search_items_map={"Hamza Bosnjak": [freelancer_item]})
     monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
-    f = fields(debtor_dob="1980-05-05", debtor_register_number="")
+    f = fields(debtor_dob="1980-05-05", debtor_register_number="",
+               debtor_name="Hamza Bosnjak")
     r = pipeline.run_pipeline(db, raw_ticket(f))
     assert r["status"] == "pending_selection"
     ids = [c["id"] for c in r["account"]["candidates"]]
@@ -538,3 +540,13 @@ def test_plain_seizure_not_misclassified():
         "We received a public_creditor_seizure request from Finanzamt Bremen issued on 2026-01-20",
         {"seizure_type": "public_creditor_seizure", "creditor_name": "Finanzamt Bremen"})
     assert kind == CIVIL
+
+
+def test_company_debtor_with_dob_is_not_s5(monkeypatch, db, client):
+    # FPOPCL-31103: Porters filled the LR's DOB on a company-debtor ticket.
+    fx = company(seizures=[OWN], details={9: {**OWN, "seizedAmount": 72.62}})
+    f = fields(debtor_dob="1985-03-03", debtor_register_number="")   # name: ACME GmbH
+    r = run(monkeypatch, db, StubBO(fixtures={UUID: fx}), f)
+    assert r["scenario"] == "S1"
+    assert r["declaration"]["template"] == "T1"
+    assert "72,62 EUR" in r["declaration"]["text"]

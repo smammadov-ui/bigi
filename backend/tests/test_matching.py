@@ -64,8 +64,10 @@ def test_freelancer_both_mismatch_is_no_match():
 
 
 def test_person_vs_company_override():
-    # Physical person (DOB present, no register number) matched to a Company.
-    f = fields(debtor_dob="1980-05-05", debtor_register_number="")
+    # Physical person (DOB present, no register number, person name) matched
+    # to a Company account.
+    f = fields(debtor_dob="1980-05-05", debtor_register_number="",
+               debtor_name="Hamza Bosnjak")
     out = match_account(StubBO(fixtures={UUID: company()}), f)
     assert out["outcome"] == "PERSON_VS_COMPANY"
 
@@ -74,6 +76,13 @@ def test_physical_person_heuristic():
     assert is_physical_person({"debtor_dob": "1980-05-05", "debtor_register_number": ""})
     assert not is_physical_person({"debtor_dob": "1980-05-05", "debtor_register_number": "HRB 1"})
     assert not is_physical_person({"debtor_dob": "", "debtor_register_number": ""})
+    # FPOPCL-31103: a legal form in the debtor name vetoes a stray DOB.
+    assert not is_physical_person({"debtor_dob": "1980-05-05", "debtor_register_number": "",
+                                   "debtor_name": "Magcars UG (haftungsbeschränkt)"})
+    assert not is_physical_person({"debtor_dob": "1980-05-05", "debtor_register_number": "",
+                                   "debtor_name": "Muster GmbH & Co. KG"})
+    assert is_physical_person({"debtor_dob": "1980-05-05", "debtor_register_number": "",
+                               "debtor_name": "Hamza Bosnjak"})
 
 
 def test_seized_iban_derived_from_main_wallet():
