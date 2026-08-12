@@ -6,6 +6,12 @@ server is up:
     python3 scripts/case_debug.py FPOPCL-24636 --no-match         # operator: none of these
     python3 scripts/case_debug.py FPOPCL-24636 --host http://localhost:8000
 
+Manual-mode replay (recompose from the run's decision set, no BO re-fetch):
+
+    python3 scripts/case_debug.py FPOPCL-24636 --template T2      # operator picks the template
+    python3 scripts/case_debug.py FPOPCL-24636 --role 9=report --role 12=ignore
+    python3 scripts/case_debug.py FPOPCL-24636 --seizable 138.03
+
 Fetches the issue through the running backend (same path the UI uses) and
 prints WHY the pipeline decided what it decided: scenario, plan notes, match
 outcome/reasons, checks. Output is sanitized — booleans, enums, counts, and
@@ -35,6 +41,17 @@ def main() -> int:
     if "--company" in args:
         company = args[args.index("--company") + 1].strip()
     no_match = "--no-match" in args
+    template = ""
+    if "--template" in args:
+        template = args[args.index("--template") + 1].strip()
+    roles: dict[str, str] = {}
+    for i, a in enumerate(args):
+        if a == "--role" and i + 1 < len(args) and "=" in args[i + 1]:
+            rid, _, role = args[i + 1].partition("=")
+            roles[rid.strip()] = role.strip()
+    seizable = None
+    if "--seizable" in args:
+        seizable = args[args.index("--seizable") + 1].strip()
 
     r = httpx.post(f"{host}/api/jira/fetch", json={"issue_key": issue}, timeout=180)
     if r.status_code != 200:
@@ -64,6 +81,45 @@ def main() -> int:
     from app.trace import build_trace
 
     trace = build_trace(d)
+
+    if template or roles or seizable is not None:
+        # Manual-mode replay: edit the run's decision set and recompose (pure —
+        # no BO re-fetch). Prints a sanitized summary of the recompose.
+        manual = d.get("manual") or {}
+        decisions = dict(manual.get("decisions") or {})
+        if not decisions:
+            print(json.dumps(trace, indent=2, ensure_ascii=False))
+            print("no manual block on the result — cannot recompose")
+            return 1
+        if template:
+            decisions["template"] = template
+        if roles:
+            decisions["seizures"] = [
+                {**row, "role": roles.get(str(row.get("id")), row.get("role"))}
+                for row in decisions.get("seizures") or []
+            ]
+        if seizable is not None:
+            decisions["seizable_eur"] = seizable
+        r = httpx.post(f"{host}/api/declaration/compose",
+                       json={"decisions": decisions,
+                             "context": {**(manual.get("context") or {}),
+                                         "options": manual.get("options") or {}},
+                             "auto": manual.get("auto")},
+                       timeout=180)
+        if r.status_code != 200:
+            print(f"HTTP {r.status_code}: {r.text[:300]}")
+            return 1
+        c = r.json()
+        trace["manual_recompose"] = {
+            "template": (c.get("declaration") or {}).get("template"),
+            "kind": (c.get("declaration") or {}).get("kind"),
+            "composed_by": (c.get("declaration") or {}).get("composed_by"),
+            "manual_template": c.get("manual_template"),
+            "warnings": c.get("warnings"),
+            "roles": {str(row.get("id")): row.get("role")
+                      for row in decisions.get("seizures") or []},
+        }
+
     print(json.dumps(trace, indent=2, ensure_ascii=False))
     return 0
 

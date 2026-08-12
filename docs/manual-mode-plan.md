@@ -1,4 +1,18 @@
-# Manual mode — design plan (brainstorm, no code yet)
+# Manual mode — design plan — ✅ IMPLEMENTED (branch `manual-mode`)
+
+**v1 deviations from the plan (deliberate):**
+
+- **Persistence deferred.** bigi has no case table (settings KV only), so the
+  decision set + override diff are not stored server-side yet; the UI shows
+  the override badge and the auto values live in `result.manual`. Add a case
+  table if audit storage becomes a requirement.
+- **Delivery is derived from the template** (letters are letters, emails are
+  emails) instead of being an independent decision.
+- **All manual controls live in the Decision panel** (including seizure roles
+  and balance figures) instead of being spread across the existing rail
+  panels — one clear place for everything the operator can change.
+- **Halted tickets do not un-halt via field overrides** (the halt check runs
+  in the parser); fix the ticket or paste corrected text instead.
 
 **Requested:** 2026-08-11 — "Once parsed, they can choose template, choose
 which seizures they want to report and etc."

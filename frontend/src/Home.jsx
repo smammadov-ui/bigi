@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { postDeclaration, jiraFetch, jiraSearch } from './api.js';
+import React, { useRef, useState } from 'react';
+import { postCompose, postDeclaration, jiraFetch, jiraSearch } from './api.js';
+import DecisionPanel from './components/DecisionPanel.jsx';
 import FieldTable from './components/FieldTable.jsx';
 import AccountPanel from './components/AccountPanel.jsx';
 import AlertsPanel from './components/AlertsPanel.jsx';
@@ -32,11 +33,71 @@ export default function Home() {
   // chosen company_uuid after candidate selection / manual entry.
   const [activeRaw, setActiveRaw] = useState('');
 
+  // Manual mode (docs/manual-mode-plan.md): auto proposes, operator disposes.
+  // `decisions` is the operator-editable copy; `autoDecisions` stays pristine
+  // for the override badge; edits recompose the document live (debounced).
+  const [manualOn, setManualOn] = useState(false);
+  const [decisions, setDecisions] = useState(null);
+  const [autoDecisions, setAutoDecisions] = useState(null);
+  const [composeWarnings, setComposeWarnings] = useState([]);
+  const composeTimer = useRef(null);
+
   const showResult = (res, meta, srcRaw) => {
     setResult(res);
     setJiraMeta(meta || null);
     setActiveRaw(srcRaw);
+    setManualOn(false);
+    setDecisions(res?.manual?.decisions || null);
+    setAutoDecisions(res?.manual?.decisions || null);
+    setComposeWarnings([]);
+    if (composeTimer.current) clearTimeout(composeTimer.current);
   };
+
+  // Debounced live recompose: PURE backend call — no BO re-fetch, no pipeline
+  // re-run; just the decision set turned back into a document.
+  function updateDecisions(next) {
+    setDecisions(next);
+    if (composeTimer.current) clearTimeout(composeTimer.current);
+    composeTimer.current = setTimeout(() => recompose(next), 500);
+  }
+
+  async function recompose(d) {
+    const m = result?.manual;
+    if (!m || !d?.template) return;
+    try {
+      const res = await postCompose({
+        decisions: d,
+        context: { ...(m.context || {}), options: m.options || {} },
+        auto: m.auto,
+      });
+      setResult((r) => ({ ...r, declaration: res.declaration }));
+      setComposeWarnings(res.warnings || []);
+    } catch (e) {
+      setComposeWarnings([`compose failed: ${e.message}`]);
+    }
+  }
+
+  // Manual mode's parsed-field editing: re-runs the WHOLE pipeline (the edit
+  // may change identification/checks), keeping the resolved account.
+  async function rerunWithFields(overrides) {
+    const text = activeRaw.trim();
+    if (!text) {
+      setError('No source text for this result — fetch or paste the ticket again.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const uuid = result?.account?.company_uuid || undefined;
+      const res = await postDeclaration(text, uuid, false, overrides);
+      showResult(res, jiraMeta, text);
+      setManualOn(true); // the operator was clearly working manually
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   // Clear everything and return Home to a blank slate for the next ticket.
   // NOTE: no window.confirm() — native dialogs don't work in the Tauri webview
@@ -52,6 +113,10 @@ export default function Home() {
     setIssues(null);
     setBrowseBusy(false);
     setActiveRaw('');
+    setManualOn(false);
+    setDecisions(null);
+    setAutoDecisions(null);
+    setComposeWarnings([]);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -264,10 +329,20 @@ export default function Home() {
       {/* Results */}
       {result && (
         <>
-          {jiraMeta && (
+          {(jiraMeta || result.manual) && (
             <div className="context-strip">
-              <span className="key">{jiraMeta.key}</span>
-              {jiraMeta.summary && <span className="summary">{jiraMeta.summary}</span>}
+              {jiraMeta && <span className="key">{jiraMeta.key}</span>}
+              {jiraMeta?.summary && <span className="summary">{jiraMeta.summary}</span>}
+              {result.manual && (
+                <button
+                  className={`btn small${manualOn ? ' primary' : ''}`}
+                  style={{ marginLeft: 'auto' }}
+                  onClick={() => setManualOn((v) => !v)}
+                  title="Unlock the decision set: template, seizure roles, amounts, IBAN, email slots"
+                >
+                  {manualOn ? 'Manual mode: on' : 'Manual mode'}
+                </button>
+              )}
             </div>
           )}
 
@@ -345,13 +420,34 @@ export default function Home() {
             )}
 
             <div className="rail">
-              <ScenarioPanel scenario={result.scenario} plan={result.plan} />
+              {manualOn && (
+                <DecisionPanel
+                  decisions={decisions}
+                  autoDecisions={autoDecisions}
+                  manual={result.manual}
+                  warnings={composeWarnings}
+                  busy={busy}
+                  onChange={updateDecisions}
+                />
+              )}
+              <ScenarioPanel
+                scenario={result.scenario}
+                plan={result.plan}
+                manualTemplate={
+                  manualOn &&
+                  decisions?.template &&
+                  decisions.template !== result.manual?.auto?.template
+                    ? decisions.template
+                    : ''
+                }
+              />
               <AccountPanel account={result.account} onPick={repick}
                             onNoMatch={declareNoMatch} busy={busy} />
               <AlertsPanel alerts={result.alerts} />
               <BalancePanel balance={result.balance} />
               <SeizureCheck check={result.seizure_check} />
-              <FieldTable parsed={parsed} />
+              <FieldTable parsed={parsed} editable={manualOn} busy={busy}
+                          onApply={rerunWithFields} />
             </div>
           </div>
         </>

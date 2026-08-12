@@ -27,6 +27,18 @@ class DeclarationRequest(BaseModel):
     # operator declared "none of the candidates is the debtor" -> force
     # NO_MATCH (Scenario 4: T7 without a ticket IBAN, T8 with one)
     no_match: bool = False
+    # manual mode: operator-corrected parsed fields (key -> new value); applied
+    # after parsing, before identification — the edit re-runs the checks
+    field_overrides: dict | None = None
+
+
+class ComposeRequest(BaseModel):
+    """Manual-mode recompose: the (edited) decision set + the context echoed
+    from the run that produced it. Stateless — no BO call, no pipeline re-run."""
+
+    decisions: dict
+    context: dict = {}
+    auto: dict | None = None
 
 
 class JiraFetchRequest(BaseModel):

@@ -24,17 +24,29 @@ const ACTION_LABEL = {
 
 // The resolved scenario + plan (rail card): code, action, rationale, and any
 // degradation notes from the resolver. Shown once a scenario is decided.
-export default function ScenarioPanel({ scenario, plan }) {
+export default function ScenarioPanel({ scenario, plan, manualTemplate }) {
   if (!scenario || !plan) return null;
   const isOperator = plan.action === 'operator';
-  const badgeCls = isOperator ? 'warn' : plan.action === 'letter' ? 't1' : 't2';
+  const badgeCls = manualTemplate
+    ? 'warn'
+    : isOperator ? 'warn' : plan.action === 'letter' ? 't1' : 't2';
 
   return (
     <div className="rail-card">
       <div className="rail-head">
         <span className="rail-label">Scenario</span>
-        <span className={`badge ${badgeCls}`}>{plan.template || ACTION_LABEL[plan.action]}</span>
+        <span className={`badge ${badgeCls}`}>
+          {manualTemplate
+            ? `${manualTemplate} — manual`
+            : plan.template || ACTION_LABEL[plan.action]}
+        </span>
       </div>
+
+      {manualTemplate && (
+        <div className="muted small" style={{ marginBottom: 6 }}>
+          auto: {scenario}/{plan.template || '—'} — operator overrode the template
+        </div>
+      )}
 
       <div className="rail-name">{SCENARIO_LABEL[scenario] || scenario}</div>
       <div className="rail-note">
