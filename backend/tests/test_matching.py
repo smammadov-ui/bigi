@@ -684,3 +684,41 @@ def test_name_similarity_units():
     assert not _names_similar("ACME UG", "ACME GmbH")
     assert not _names_similar("Hamza Bosnjak", "ACME GmbH")
     assert _names_similar("Susann Piekorz", "Malerbetrieb Susann Piekorz")
+
+
+def test_freelancer_trade_name_confirms_via_person_full_name():
+    # FPOPCL-31366: sole trader — businessName is the TRADE name, the seizure
+    # names the person. PersonFullName from the CDD must count.
+    fx = company(type_="Freelancer", name="HLP Druck - Textilveredelung",
+                 address={"street": "Hermann-Oberth-Str. 5", "zip": "83052",
+                          "city": "Bruckmühl"})
+    fx["cdd"]["PersonFullName"] = "Tarkan Öztepe"
+    f = fields(seized_iban="", debtor_register_number="",
+               debtor_name="Tarkan Öztepe", debtor_dob="1975-01-01",
+               debtor_address="Hermann-Oberth-Str. 5, 83052 Bruckmühl")
+    out = match_account(StubBO(fixtures={UUID: fx}), f)
+    assert out["outcome"] == "MATCH"
+    assert out["matched_by"] == "address"
+
+
+def test_person_full_name_never_counts_for_companies():
+    # A director's name is NOT the company: gate stays blocked -> S5 handles it.
+    fx = company()   # Company "ACME GmbH"
+    fx["cdd"]["PersonFullName"] = "Hamza Bosnjak"
+    f = fields(debtor_dob="1980-05-05", debtor_register_number="",
+               debtor_name="Hamza Bosnjak")
+    out = match_account(StubBO(fixtures={UUID: fx}), f)
+    assert out["outcome"] == "PERSON_VS_COMPANY"
+
+
+def test_cdd_person_names_nested_and_deduped():
+    from app.matching import _cdd_person_names
+
+    cdd = {"sections": [{"parameters": [
+        {"parameter": "PersonFullName", "values": [{"value": "Tarkan Öztepe"}]},
+        {"parameter": "PersonFullName", "values": [{"value": "tarkan  öztepe"}]},
+        {"parameter": "PersonEmail", "values": [{"value": "x@y.z"}]},
+    ]}]}
+    assert _cdd_person_names(cdd) == ["Tarkan Öztepe"]
+    assert _cdd_person_names({"PersonFullName": "Susann Piekorz"}) == ["Susann Piekorz"]
+    assert _cdd_person_names({}) == []

@@ -149,7 +149,7 @@ match (IBAN alone is not definitive).
 **Dependency:** item 6 (DOB format normalization) is REQUIRED by the matrix's
 "Freelancer name, DOB match -> definitive" rule.
 
-## 8. Name gate misses freelancer trade names (Geschäftsbezeichnung)
+## 8. Name gate misses freelancer trade names (Geschäftsbezeichnung) — ✅ IMPLEMENTED
 
 **Case:** FPOPCL-31366 / trace FPOPCL-31302 (HLP Druck - Textilveredelung,
 `d07e792f-…`) → S4/T7 despite a definitive comment UUID, IDENTICAL address
@@ -162,7 +162,7 @@ The owner's person name lives in the CDD under `parameter: "PersonFullName"`
 (subSectionType "Person"), which the gate never looks at → DIFFERS → strong
 address signal blocked → NO_MATCH → S4.
 
-**Fix (pending go):** in `app/matching.py`:
+**Fix (implemented):** in `app/matching.py`:
 1. `_cdd_person_names(cdd)` — harvest ALL `PersonFullName` values (there can
    be several person nodes).
 2. For **Freelancer** accounts only, add those person names to the name-gate

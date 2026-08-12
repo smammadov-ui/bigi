@@ -200,6 +200,45 @@ def _cdd_registered_name(cdd: dict) -> str:
     return _cdd_param_value(cdd, "CompanyRegisteredName", ("CompanyRegisteredName",))
 
 
+def _cdd_person_names(cdd: dict) -> list[str]:
+    """ALL ``PersonFullName`` values out of the cdd_profile (owner / person
+    nodes), deduped. For FREELANCER accounts these count toward name
+    agreement: a sole trader's BO businessName is often the TRADE name
+    (Geschäftsbezeichnung) while the seizure names the PERSON — live case
+    FPOPCL-31366, "Tarkan Öztepe" vs "HLP Druck - Textilveredelung"."""
+    if not isinstance(cdd, dict):
+        return []
+    out: list[str] = []
+    flat = cdd.get("PersonFullName")
+    if isinstance(flat, str) and flat.strip():
+        out.append(flat)
+    elif isinstance(flat, (list, tuple)):
+        out.extend(str(x) for x in flat if str(x).strip())
+
+    def walk(o):
+        if isinstance(o, dict):
+            if o.get("parameter") == "PersonFullName":
+                found: list[str] = []
+                _harvest_strings(o, found)   # first string = the name value
+                first = next((f for f in found if f.strip()), "")
+                if first:
+                    out.append(first)
+            else:
+                for v in o.values():
+                    walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(cdd)
+    seen: list[str] = []
+    for n in out:
+        n = re.sub(r"\s+", " ", str(n)).strip()
+        if n and n.casefold() not in (s.casefold() for s in seen):
+            seen.append(n)
+    return seen
+
+
 def _candidate(it: dict) -> dict:
     return {
         "id": it.get("id"),
@@ -353,8 +392,11 @@ def _name_agreement(ticket_name, account_names) -> tuple[bool | None, str]:
     """(True/False/None, detail): does the ticket's debtor name agree with any
     of the account's names? ``None`` = not comparable (a side is missing)."""
     tn = re.sub(r"\s+", " ", str(ticket_name or "")).strip()
-    names = [re.sub(r"\s+", " ", str(n or "")).strip() for n in account_names]
-    names = [n for n in names if n]
+    cleaned = [re.sub(r"\s+", " ", str(n or "")).strip() for n in account_names]
+    names: list[str] = []
+    for n in cleaned:   # dedupe (businessName often equals the registered name)
+        if n and n.casefold() not in (s.casefold() for s in names):
+            names.append(n)
     if not tn or not names:
         return None, "debtor name or account name missing"
     for n in names:
@@ -795,12 +837,17 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
     # Freelancer = name + (address|DOB|IBAN). The CDD registered/trade name
     # counts too, and slight differences are tolerated — but conflicting
     # explicit legal forms are different legal entities.
-    registered_name = _cdd_registered_name(cdd)
+    account_names = [business_name, _cdd_registered_name(cdd)]
+    if account_type == "Freelancer":
+        # A sole trader's businessName is often the TRADE name while the
+        # seizure names the PERSON — the owner's PersonFullName counts
+        # (the matrix's "Freelancer name"). Deliberately NOT for Companies:
+        # a director's name is not the company (S5 territory).
+        account_names += _cdd_person_names(cdd)
     if ident.get("name_exact"):
         name_ok, name_note = True, "identified by full-name equality"
     else:
-        name_ok, name_note = _name_agreement(
-            parsed.get("debtor_name"), [business_name, registered_name])
+        name_ok, name_note = _name_agreement(parsed.get("debtor_name"), account_names)
     reasons.append(
         "name check: "
         + ("agrees" if name_ok else "not comparable" if name_ok is None else "DIFFERS")
