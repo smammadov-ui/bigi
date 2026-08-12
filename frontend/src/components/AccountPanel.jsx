@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import CandidatePicker from './CandidatePicker.jsx';
+import InfoBadge from './InfoBadge.jsx';
 
 const MATCHED_BY_LABEL = {
   manual: 'operator selection',
@@ -37,7 +38,7 @@ const BUCKET_BADGE = {
 // uniquely resolve it (needs_selection), show the candidate picker /
 // manual-UUID re-submit. Once resolved, also show the confirmation outcome
 // (IBAN / address / DOB rule) and the BO account status bucket.
-export default function AccountPanel({ account, onPick, onNoMatch, busy }) {
+export default function AccountPanel({ account, onPick, onNoMatch, busy, notes }) {
   const [showReasons, setShowReasons] = useState(false);
   if (!account) return null;
   const resolved = !!account.company_uuid;
@@ -47,6 +48,7 @@ export default function AccountPanel({ account, onPick, onNoMatch, busy }) {
     <div className="rail-card">
       <div className="rail-head">
         <span className="rail-label">Account</span>
+        <InfoBadge notes={notes} />
         {resolved && outcome && (
           <span className={`badge ${outcome.cls}`}>{outcome.label}</span>
         )}

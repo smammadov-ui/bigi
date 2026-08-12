@@ -1,4 +1,5 @@
 import React from 'react';
+import InfoBadge from './InfoBadge.jsx';
 
 // German money formatter for raw numbers in the wallet breakdown (e.g. 6771.29
 // -> "6.771,29"). The headline figures arrive pre-formatted from the backend.
@@ -11,7 +12,7 @@ function de(n) {
 // Account balance (EUR wallets only) + the seizable amount used in the
 // declaration (rail card). Funds held under an ongoing seizure live on the
 // seizure record (not the bank wallets), so they are shown explicitly.
-export default function BalancePanel({ balance }) {
+export default function BalancePanel({ balance, notes }) {
   if (!balance) return null;
   const {
     available_eur_de,
@@ -26,7 +27,10 @@ export default function BalancePanel({ balance }) {
 
   return (
     <div className="rail-card">
-      <div className="rail-label">Balance</div>
+      <div className="rail-head">
+        <span className="rail-label">Balance</span>
+        <InfoBadge notes={notes} />
+      </div>
 
       {error && (
         <div className="banner warn">

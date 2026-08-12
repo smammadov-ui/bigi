@@ -241,9 +241,17 @@ export default function Home() {
   const caseRef = parsed?.case_references;
   const pendingSelection = result?.status === 'pending_selection';
   const routedOut = result?.scenario === 'ROUTED_OUT';
-  // Review warnings worth a banner (the parsed warnings render separately).
-  const pipelineWarnings = (result?.warnings || []).filter(
-    (w) => !w.startsWith('halted:')
+  // FYI-grade notes move into the panels' ⓘ badges instead of full-width
+  // banners: identification/parse notes -> Account, non-EUR note -> Balance.
+  const allPipeline = (result?.warnings || []).filter((w) => !w.startsWith('halted:'));
+  const accountNotes = [
+    ...(parsed?.warnings || []),
+    ...allPipeline.filter((w) => w.startsWith('workspaces') || w.includes('searched across workspaces')),
+  ];
+  const balanceNotes = allPipeline.filter((w) => w.toLowerCase().includes('non-eur'));
+  // Everything else stays a visible banner (resolver notes, amount fallbacks…).
+  const pipelineWarnings = allPipeline.filter(
+    (w) => !accountNotes.includes(w) && !balanceNotes.includes(w)
   );
 
   return (
@@ -366,17 +374,24 @@ export default function Home() {
             </div>
           )}
 
-          {parsed && (parsed.halted || (parsed.warnings && parsed.warnings.length > 0)) && (
-            <div className={`banner ${parsed.halted ? 'err' : 'warn'}`}>
-              {parsed.halted && (
-                <div>
-                  <strong>Parsing halted:</strong>{' '}
-                  {(parsed.halt_reasons || []).join('; ')}
-                </div>
-              )}
+          {parsed?.halted && (
+            <div className="banner err">
+              <div>
+                <strong>Parsing halted:</strong>{' '}
+                {(parsed.halt_reasons || []).join('; ')}
+              </div>
               {parsed.warnings && parsed.warnings.length > 0 && (
                 <div>{parsed.warnings.join('; ')}</div>
               )}
+            </div>
+          )}
+          {/* No Account panel to host the ⓘ badge (halted/criminal) -> keep
+              the identification notes visible as a banner. */}
+          {!parsed?.halted && !result.account && accountNotes.length > 0 && (
+            <div className="banner warn">
+              {accountNotes.map((w, i) => (
+                <div key={i}>{w}</div>
+              ))}
             </div>
           )}
 
@@ -462,9 +477,10 @@ export default function Home() {
                 }
               />
               <AccountPanel account={result.account} onPick={repick}
-                            onNoMatch={declareNoMatch} busy={busy} />
+                            onNoMatch={declareNoMatch} busy={busy}
+                            notes={accountNotes} />
               <AlertsPanel alerts={result.alerts} />
-              <BalancePanel balance={result.balance} />
+              <BalancePanel balance={result.balance} notes={balanceNotes} />
               <SeizureCheck check={result.seizure_check} />
               <FieldTable parsed={parsed} editable={manualOn} busy={busy}
                           onApply={rerunWithFields} />
