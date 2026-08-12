@@ -149,6 +149,36 @@ match (IBAN alone is not definitive).
 **Dependency:** item 6 (DOB format normalization) is REQUIRED by the matrix's
 "Freelancer name, DOB match -> definitive" rule.
 
+## 8. Name gate misses freelancer trade names (Geschäftsbezeichnung)
+
+**Case:** FPOPCL-31366 / trace FPOPCL-31302 (HLP Druck - Textilveredelung,
+`d07e792f-…`) → S4/T7 despite a definitive comment UUID, IDENTICAL address
+(sim 1.00), account DOB present, and the own case already on the account.
+
+**Root cause:** the item-7 name gate compares the ticket's debtor name
+("Tarkan Öztepe") against businessName + CDD CompanyRegisteredName — but for
+this sole trader BOTH are the trade name ("HLP Druck - Textilveredelung").
+The owner's person name lives in the CDD under `parameter: "PersonFullName"`
+(subSectionType "Person"), which the gate never looks at → DIFFERS → strong
+address signal blocked → NO_MATCH → S4.
+
+**Fix (pending go):** in `app/matching.py`:
+1. `_cdd_person_names(cdd)` — harvest ALL `PersonFullName` values (there can
+   be several person nodes).
+2. For **Freelancer** accounts only, add those person names to the name-gate
+   candidates (sole trader = the person; this IS the matrix's "Freelancer
+   name"). For Company accounts person names must NOT count — a director's
+   name is not the company (that stays PERSON_VS_COMPANY / S5 territory).
+3. Cosmetic: dedupe the account-name list in the "name check" reason (today
+   it prints the same trade name twice).
+
+**Expected after fix:** name agrees via PersonFullName → Freelancer + strong
+address (and DOB) → MATCH → own case "95331653FKMJ-27.07.26-1 PB", no
+competing rows → **S1/T1** with the held €82,41.
+
+**Regression guard:** person name vs Company account must still gate/S5
+(FPOPCL-31103 company-with-DOB and Hamza-style S5 tests unchanged).
+
 ## Reference — how to capture new findings
 
 `\.venv/bin/python3 scripts/case_debug.py FPOPCL-XXXXX [--company <uuid>] [--no-match]`
