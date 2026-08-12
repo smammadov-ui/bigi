@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import WorkBar from './WorkBar.jsx';
 
 const COMPOSED_LABEL = {
   'llm:openai': 'LLM (openai)',
@@ -173,7 +174,7 @@ async function buildLetterPdfBytes(PDFLib, text, subject) {
 // Editable declaration rendered as a document: a serif preview (header grid +
 // prose + bulleted ongoing seizures, with source underlines) that flips to a
 // mono textarea for edits, a mail-subject strip, and Copy / Download(.txt).
-export default function DeclarationEditor({ declaration, caseRef, onToast }) {
+export default function DeclarationEditor({ declaration, caseRef, onToast, working, flash }) {
   const [text, setText] = useState(declaration?.text || '');
   const [editing, setEditing] = useState(false);
   // Manual mode regenerates the document on decision edits; if the operator
@@ -319,7 +320,8 @@ export default function DeclarationEditor({ declaration, caseRef, onToast }) {
   }
 
   return (
-    <div className="hero">
+    <div className="hero" style={{ position: 'relative' }}>
+      <WorkBar active={!!working} />
       <div className="hero-head">
         <span className="hero-title">{heroTitle}</span>
         <span className={`badge ${kind !== 'letter' ? 'accent' : isT2 ? 't2' : 't1'}`}>
@@ -329,6 +331,16 @@ export default function DeclarationEditor({ declaration, caseRef, onToast }) {
           {COMPOSED_LABEL[composedBy] || composedBy}
         </span>
         <span className="spacer" />
+        {working && (
+          <span className="badge" style={{ color: '#ec4899', borderColor: '#5a3246' }}>
+            ⟳ {working}
+          </span>
+        )}
+        {!working && flash && (
+          <span className="badge" style={{ color: '#5ac88c', borderColor: '#325a46' }}>
+            ✓ updated
+          </span>
+        )}
         <div className="seg">
           <button className={!editing ? 'on' : ''} onClick={() => setEditing(false)}>
             Preview
@@ -364,7 +376,8 @@ export default function DeclarationEditor({ declaration, caseRef, onToast }) {
       </div>
 
       {editing ? (
-        <div className="decl-edit">
+        <div className="decl-edit"
+             style={{ opacity: working ? 0.45 : 1, transition: 'opacity .25s ease' }}>
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -379,6 +392,7 @@ export default function DeclarationEditor({ declaration, caseRef, onToast }) {
             onDoubleClick={() => setEditing(true)}
             onCopy={handleSelectionCopy}
             title="Double-click to edit"
+            style={{ opacity: working ? 0.45 : 1, transition: 'opacity .25s ease' }}
           >
             {headerRows.length > 0 && (
               <div className="letter-head">

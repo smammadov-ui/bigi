@@ -45,6 +45,31 @@ export default function Home() {
   const [composeWarnings, setComposeWarnings] = useState([]);
   const composeTimer = useRef(null);
 
+  // Async-work indicator (WorkBar + status chip on the document card).
+  // `working` carries the label; it only turns on when a call exceeds 250ms
+  // (anti-flicker), and a successful finish flashes "updated" for ~2s.
+  const [working, setWorking] = useState(null);
+  const [flash, setFlash] = useState(false);
+  const flashTimer = useRef(null);
+
+  async function tracked(label, fn) {
+    const delay = setTimeout(() => setWorking(label), 250);
+    let ok = false;
+    try {
+      const out = await fn();
+      ok = true;
+      return out;
+    } finally {
+      clearTimeout(delay);
+      setWorking(null);
+      if (ok) {
+        setFlash(true);
+        clearTimeout(flashTimer.current);
+        flashTimer.current = setTimeout(() => setFlash(false), 2200);
+      }
+    }
+  }
+
   const showResult = (res, meta, srcRaw) => {
     setResult(res);
     setJiraMeta(meta || null);
@@ -84,11 +109,13 @@ export default function Home() {
     const m = result?.manual;
     if (!m || !d?.template) return;
     try {
-      const res = await postCompose({
-        decisions: d,
-        context: { ...(m.context || {}), options: m.options || {} },
-        auto: m.auto,
-      });
+      const res = await tracked(`recomposing — ${d.template}…`, () =>
+        postCompose({
+          decisions: d,
+          context: { ...(m.context || {}), options: m.options || {} },
+          auto: m.auto,
+        })
+      );
       setResult((r) => ({ ...r, declaration: res.declaration }));
       setComposeWarnings(res.warnings || []);
     } catch (e) {
@@ -108,7 +135,9 @@ export default function Home() {
     setError('');
     try {
       const uuid = result?.account?.company_uuid || undefined;
-      const res = await postDeclaration(text, uuid, false, overrides);
+      const res = await tracked('running BO checks…', () =>
+        postDeclaration(text, uuid, false, overrides)
+      );
       showResult(res, jiraMeta, text);
       setManualOn(true); // the operator was clearly working manually
     } catch (e) {
@@ -228,7 +257,9 @@ export default function Home() {
     setBusy(true);
     setError('');
     try {
-      const res = await postDeclaration(text, uuid, noMatch);
+      const res = await tracked('running BO checks…', () =>
+        postDeclaration(text, uuid, noMatch)
+      );
       showResult(res, jiraMeta, text);
     } catch (e) {
       setError(e.message);
@@ -412,6 +443,8 @@ export default function Home() {
                 declaration={result.declaration}
                 caseRef={caseRef}
                 onToast={setToast}
+                working={working}
+                flash={flash}
               />
             ) : (
               <div className="hero">
