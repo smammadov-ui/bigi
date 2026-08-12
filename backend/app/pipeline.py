@@ -44,6 +44,7 @@ from . import llm
 from .amounts import compute_seized_amount
 from .bo_client import BOClient, BOError
 from .classify import CRIMINAL, REPEAL, RESTRICTION, RFI_KIND, classify_ticket
+from .decisions import build_manual
 from .formatting import de_amount
 from .matching import match_account
 from .parser import parse_jira
@@ -76,7 +77,8 @@ def _alerts_public(alerts: dict) -> dict:
 
 def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None,
                  comment_uuids: list[str] | None = None,
-                 no_match: bool = False) -> dict:
+                 no_match: bool = False,
+                 field_overrides: dict | None = None) -> dict:
     """Run the full declaration pipeline and return the editable result dict.
 
     ``comment_uuids``: company UUIDs found in the ticket's Jira COMMENTS
@@ -88,6 +90,11 @@ def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None,
     ``no_match``: the operator declared that NONE of the offered candidates is
     the debtor — identification is skipped and the case resolves as NO_MATCH
     (Scenario 4 -> T7/T8 email to the creditor).
+
+    ``field_overrides``: manual mode — operator-corrected parsed fields
+    (key -> value), applied AFTER parsing and BEFORE identification, so the
+    correction re-runs identification + checks. Applied keys are surfaced as a
+    parse warning and in ``parsed["edited_fields"]``.
     """
     if not raw_text or not raw_text.strip():
         raise BigiError("raw_text is required")
@@ -117,11 +124,22 @@ def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None,
                 p["warnings"] = list(p.get("warnings") or []) + [
                     f"{len(merged)} company UUIDs from description+comments — "
                     "disambiguating by wallet IBAN / operator selection"]
+    edited_fields: list[str] = []
+    if field_overrides:
+        for k, v in field_overrides.items():
+            if k in fields and str(fields.get(k) or "") != str(v or ""):
+                fields[k] = str(v or "")
+                edited_fields.append(k)
+        if edited_fields:
+            p["warnings"] = list(p.get("warnings") or []) + [
+                "operator-edited fields: " + ", ".join(sorted(edited_fields))]
+
     parsed = {
         **fields,
         "warnings": p.get("warnings", []),
         "halted": p.get("halted", False),
         "halt_reasons": p.get("halt_reasons", []),
+        "edited_fields": edited_fields,
     }
 
     if parsed["halted"]:
@@ -132,6 +150,7 @@ def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None,
             "parsed": parsed,
             "account": None, "alerts": None, "balance": None, "seizure_check": None,
             "scenario": None, "plan": None, "amount": None, "declaration": None,
+            "manual": build_manual(parsed=parsed),
             "warnings": [f"halted: {r}" for r in parsed["halt_reasons"]],
         }
 
@@ -150,6 +169,7 @@ def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None,
             "scenario": Scenario.ROUTED_OUT.value,
             "plan": build_plan(Scenario.ROUTED_OUT.value, notes),
             "amount": None, "declaration": None,
+            "manual": build_manual(parsed=parsed, scenario=Scenario.ROUTED_OUT.value),
             "warnings": [f"classified: {n}" for n in notes],
         }
 
@@ -193,6 +213,7 @@ def _identification_failed(parsed: dict, fields: dict, exc) -> dict:
         "account": account,
         "alerts": None, "balance": None, "seizure_check": None,
         "scenario": None, "plan": None, "amount": None, "declaration": None,
+        "manual": build_manual(parsed=parsed, account=account),
         "warnings": [f"identification failed: {exc}"],
     }
 
@@ -235,6 +256,7 @@ def _run_checks_and_compose(db: Session, client, raw_text: str, parsed: dict,
             "account": _account_public(match),
             "alerts": None, "balance": None, "seizure_check": None,
             "scenario": None, "plan": None, "amount": None, "declaration": None,
+            "manual": build_manual(parsed=parsed, account=_account_public(match)),
             "warnings": ["account not uniquely resolved — pick a candidate or enter a company UUID"],
         }
 
@@ -347,5 +369,11 @@ def _run_checks_and_compose(db: Session, client, raw_text: str, parsed: dict,
         "plan": plan,
         "amount": amount,
         "declaration": declaration,
+        # Manual mode: the auto decisions as an editable set + recompose context.
+        "manual": build_manual(
+            parsed=parsed, scenario=scenario, plan=plan, declaration=declaration,
+            account=_account_public(match),
+            balance={**bal, "seizable_eur": seizable_eur},
+            seizure_check=sc, wallets=match.get("wallets_items")),
         "warnings": warnings,
     }

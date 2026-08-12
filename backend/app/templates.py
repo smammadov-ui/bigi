@@ -213,9 +213,8 @@ def template_kind(template_id: str) -> str:
     return "email"
 
 
-def build_subject(scenario: str, fields: dict) -> str:
-    """Mail subject for the document (the body does not repeat it)."""
-    template_id = select_template(scenario)
+def build_subject_for_template(template_id: str, fields: dict) -> str:
+    """Mail subject for a TEMPLATE (manual mode picks templates directly)."""
     fields = fields or {}
     case_ref = str(fields.get("case_references") or "")
     debtor = str(fields.get("debtor_name") or "")
@@ -226,6 +225,11 @@ def build_subject(scenario: str, fields: dict) -> str:
     prefix = _EMAIL_SUBJECT_PREFIX.get(template_id, "")
     base = f"Pfändungssache {case_ref} – {debtor}".strip(" –")
     return f"{prefix} – {base}" if prefix else base
+
+
+def build_subject(scenario: str, fields: dict) -> str:
+    """Mail subject for the document (the body does not repeat it)."""
+    return build_subject_for_template(select_template(scenario), fields)
 
 
 # When no scenario is given (standalone template use), each letter template

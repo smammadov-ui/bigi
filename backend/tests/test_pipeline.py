@@ -17,7 +17,7 @@ from tests.stub_bo import StubBO
 
 RESULT_KEYS = {
     "status", "parsed", "account", "alerts", "balance", "seizure_check",
-    "scenario", "plan", "amount", "declaration", "warnings",
+    "scenario", "plan", "amount", "declaration", "manual", "warnings",
 }
 
 

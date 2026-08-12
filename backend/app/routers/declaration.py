@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 
 from ..bo_client import BOError
 from ..db import get_db
+from ..decisions import compose_from_decisions
 from ..pipeline import run_pipeline
-from ..schemas import DeclarationRequest, BigiError
+from ..schemas import BigiError, ComposeRequest, DeclarationRequest
 
 router = APIRouter()
 
@@ -26,4 +27,12 @@ def create_declaration(body: DeclarationRequest, db: Session = Depends(get_db)):
     if not body.raw_text or not body.raw_text.strip():
         raise HTTPException(status_code=400, detail="raw_text is required")
     return _guard(run_pipeline, db, body.raw_text, body.company_uuid, None,
-                  body.no_match)
+                  body.no_match, body.field_overrides)
+
+
+@router.post("/api/declaration/compose")
+def recompose(body: ComposeRequest, db: Session = Depends(get_db)):
+    """Manual mode: stateless recompose from an operator-edited decision set.
+    Pure function of the posted payload — no BO call, no pipeline re-run."""
+    return _guard(compose_from_decisions, db, body.decisions, body.context,
+                  body.auto)
