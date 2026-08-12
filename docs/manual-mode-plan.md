@@ -119,10 +119,12 @@ re-run identification + checks (BO re-fetch), decision-set edits only
 recompose. UI: "Edit parsed fields" expander under the warnings banner;
 edited fields marked against the raw parse in the trace.
 
-## Remaining open questions (small, decide during build)
+## Final decisions (2026-08-12) — plan complete, ready to build
 
-1. Cross-hints: when the operator's data implies a different template (all
-   competing rows unticked → T1 fits), suggest actively or stay passive?
-   (leaning: passive warning text that names the fitting template)
-2. Scenario label when the template is overridden: display "manual
-   (auto: S2)" — leaning yes, cheap and honest.
+1. **Cross-hints: passive.** When the operator's data implies a different
+   template, show a warning text that names the fitting template ("your
+   selection matches T1 — no other seizures reported"); never auto-switch or
+   nag.
+2. **Scenario label: show both.** When the template is overridden the badge
+   reads "T1 — manual (auto: S2/T2)"; the stored case and trace keep both
+   values.
