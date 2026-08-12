@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { postCompose, postDeclaration, jiraFetch, jiraSearch } from './api.js';
 import DecisionPanel from './components/DecisionPanel.jsx';
+import WorkBar from './components/WorkBar.jsx';
 import FieldTable from './components/FieldTable.jsx';
 import AccountPanel from './components/AccountPanel.jsx';
 import AlertsPanel from './components/AlertsPanel.jsx';
@@ -45,15 +46,31 @@ export default function Home() {
   const [composeWarnings, setComposeWarnings] = useState([]);
   const composeTimer = useRef(null);
 
-  // Async-work indicator (WorkBar + status chip on the document card).
-  // `working` carries the label; it only turns on when a call exceeds 250ms
-  // (anti-flicker), and a successful finish flashes "updated" for ~2s.
+  // Async-work indicator (WorkBar + status chip). `working` carries the
+  // current stage label; `workHost` says which card hosts the bar ('input'
+  // for first runs, 'doc' for recomposes/re-runs). A single HTTP call has no
+  // real stage events, so the label CYCLES through the server's known stage
+  // order (~1.3s each, holding on the last) — honest about order, not exact
+  // timing. Turns on only when a call exceeds 250ms (anti-flicker); a
+  // successful finish on the document card flashes "updated" for ~2s.
   const [working, setWorking] = useState(null);
+  const [workHost, setWorkHost] = useState('doc');
   const [flash, setFlash] = useState(false);
   const flashTimer = useRef(null);
+  const stageTimer = useRef(null);
 
-  async function tracked(label, fn) {
-    const delay = setTimeout(() => setWorking(label), 250);
+  async function tracked(labels, fn, host = 'doc') {
+    const stages = Array.isArray(labels) ? labels : [labels];
+    let i = 0;
+    const delay = setTimeout(() => {
+      setWorkHost(host);
+      setWorking(stages[0]);
+      stageTimer.current = setInterval(() => {
+        i = Math.min(i + 1, stages.length - 1);
+        setWorking(stages[i]);
+        if (i === stages.length - 1) clearInterval(stageTimer.current);
+      }, 1300);
+    }, 250);
     let ok = false;
     try {
       const out = await fn();
@@ -61,14 +78,23 @@ export default function Home() {
       return out;
     } finally {
       clearTimeout(delay);
+      clearInterval(stageTimer.current);
       setWorking(null);
-      if (ok) {
+      if (ok && host === 'doc') {
         setFlash(true);
         clearTimeout(flashTimer.current);
         flashTimer.current = setTimeout(() => setFlash(false), 2200);
       }
     }
   }
+
+  const PIPELINE_STAGES = [
+    'parsing ticket fields…',
+    'identifying the account in BO…',
+    'running checks — alerts · seizures · balance…',
+    'resolving the scenario…',
+    'composing the document…',
+  ];
 
   const showResult = (res, meta, srcRaw) => {
     setResult(res);
@@ -135,7 +161,7 @@ export default function Home() {
     setError('');
     try {
       const uuid = result?.account?.company_uuid || undefined;
-      const res = await tracked('running BO checks…', () =>
+      const res = await tracked(PIPELINE_STAGES, () =>
         postDeclaration(text, uuid, false, overrides)
       );
       showResult(res, jiraMeta, text);
@@ -178,7 +204,7 @@ export default function Home() {
     setBusy(true);
     setError('');
     try {
-      const res = await postDeclaration(text);
+      const res = await tracked(PIPELINE_STAGES, () => postDeclaration(text), 'input');
       showResult(res, null, text);
     } catch (e) {
       setError(e.message);
@@ -196,7 +222,9 @@ export default function Home() {
     setBusy(true);
     setError('');
     try {
-      const res = await jiraFetch(k);
+      const res = await tracked(
+        ['fetching the ticket from Jira…', ...PIPELINE_STAGES],
+        () => jiraFetch(k), 'input');
       const { jira, ...pipeline } = res;
       const meta = jira
         ? { key: jira.key, summary: jira.summary }
@@ -257,7 +285,7 @@ export default function Home() {
     setBusy(true);
     setError('');
     try {
-      const res = await tracked('running BO checks…', () =>
+      const res = await tracked(PIPELINE_STAGES, () =>
         postDeclaration(text, uuid, noMatch)
       );
       showResult(res, jiraMeta, text);
@@ -288,9 +316,15 @@ export default function Home() {
   return (
     <>
       {/* Input card */}
-      <div className="card">
+      <div className="card" style={{ position: 'relative' }}>
+        <WorkBar active={workHost === 'input' && !!working} />
         <div className="card-head">
           <h2>Input</h2>
+          {workHost === 'input' && working && (
+            <span className="badge" style={{ color: '#ec4899', borderColor: '#5a3246' }}>
+              ⟳ {working}
+            </span>
+          )}
           <div style={{ display: 'flex', gap: 8 }}>
             <button
               className="btn small"
@@ -443,7 +477,7 @@ export default function Home() {
                 declaration={result.declaration}
                 caseRef={caseRef}
                 onToast={setToast}
-                working={working}
+                working={workHost === 'doc' ? working : null}
                 flash={flash}
               />
             ) : (
