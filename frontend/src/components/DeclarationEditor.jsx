@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 const COMPOSED_LABEL = {
   'llm:openai': 'LLM (openai)',
@@ -176,11 +176,22 @@ async function buildLetterPdfBytes(PDFLib, text, subject) {
 export default function DeclarationEditor({ declaration, caseRef, onToast }) {
   const [text, setText] = useState(declaration?.text || '');
   const [editing, setEditing] = useState(false);
+  // Manual mode regenerates the document on decision edits; if the operator
+  // had ALSO hand-edited the text, that edit is replaced — say so once.
+  const [regenNotice, setRegenNotice] = useState(false);
+  const prevDecl = useRef(declaration?.text || '');
 
-  // Reset the editor when a new declaration arrives (new run / re-pick).
+  // Reset the editor when a new declaration arrives (new run / re-pick /
+  // manual-mode recompose).
   useEffect(() => {
-    setText(declaration?.text || '');
+    const incoming = declaration?.text || '';
+    setRegenNotice(
+      prevDecl.current !== incoming && text !== prevDecl.current && text !== ''
+    );
+    prevDecl.current = incoming;
+    setText(incoming);
     setEditing(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [declaration]);
 
   if (!declaration) return null;
@@ -327,6 +338,16 @@ export default function DeclarationEditor({ declaration, caseRef, onToast }) {
           </button>
         </div>
       </div>
+
+      {regenNotice && (
+        <div className="banner warn" style={{ margin: '8px 0' }}>
+          Document regenerated from the decision set — your manual text edits
+          were replaced.{' '}
+          <button className="btn small" onClick={() => setRegenNotice(false)}>
+            OK
+          </button>
+        </div>
+      )}
 
       <div className="subject-strip">
         <span className="lbl">Subject</span>

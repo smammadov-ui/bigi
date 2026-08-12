@@ -70,11 +70,19 @@ export function testLLM() {
 // ---- Declaration pipeline ----
 // company_uuid is an optional operator override after candidate selection /
 // manual entry; omitted on the first pass.
-export function postDeclaration(raw_text, company_uuid, no_match) {
+export function postDeclaration(raw_text, company_uuid, no_match, field_overrides) {
   const body = { raw_text };
   if (company_uuid) body.company_uuid = company_uuid;
   if (no_match) body.no_match = true;
+  if (field_overrides && Object.keys(field_overrides).length > 0)
+    body.field_overrides = field_overrides;
   return request('POST', '/api/declaration', body);
+}
+
+// Manual mode: stateless recompose from an operator-edited decision set.
+// payload = { decisions, context, auto } (echoed from result.manual).
+export function postCompose(payload) {
+  return request('POST', '/api/declaration/compose', payload);
 }
 
 // ---- Jira ----
