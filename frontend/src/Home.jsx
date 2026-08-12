@@ -39,6 +39,9 @@ export default function Home() {
   const [manualOn, setManualOn] = useState(false);
   const [decisions, setDecisions] = useState(null);
   const [autoDecisions, setAutoDecisions] = useState(null);
+  // The auto pipeline's document, kept pristine so switching manual mode OFF
+  // restores it (recomposes overwrite result.declaration).
+  const [autoDeclaration, setAutoDeclaration] = useState(null);
   const [composeWarnings, setComposeWarnings] = useState([]);
   const composeTimer = useRef(null);
 
@@ -49,9 +52,25 @@ export default function Home() {
     setManualOn(false);
     setDecisions(res?.manual?.decisions || null);
     setAutoDecisions(res?.manual?.decisions || null);
+    setAutoDeclaration(res?.declaration || null);
     setComposeWarnings([]);
     if (composeTimer.current) clearTimeout(composeTimer.current);
   };
+
+  // Manual OFF = back to auto: decisions reset to the pristine copy and the
+  // auto document replaces any recomposed one. Manual ON starts from auto.
+  function toggleManual() {
+    setManualOn((v) => {
+      const next = !v;
+      if (!next) {
+        if (composeTimer.current) clearTimeout(composeTimer.current);
+        setDecisions(autoDecisions);
+        setComposeWarnings([]);
+        setResult((r) => (r ? { ...r, declaration: autoDeclaration } : r));
+      }
+      return next;
+    });
+  }
 
   // Debounced live recompose: PURE backend call — no BO re-fetch, no pipeline
   // re-run; just the decision set turned back into a document.
@@ -116,6 +135,7 @@ export default function Home() {
     setManualOn(false);
     setDecisions(null);
     setAutoDecisions(null);
+    setAutoDeclaration(null);
     setComposeWarnings([]);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -337,8 +357,8 @@ export default function Home() {
                 <button
                   className={`btn small${manualOn ? ' primary' : ''}`}
                   style={{ marginLeft: 'auto' }}
-                  onClick={() => setManualOn((v) => !v)}
-                  title="Unlock the decision set: template, seizure roles, amounts, IBAN, email slots"
+                  onClick={toggleManual}
+                  title="Unlock the decision set: template, seizure roles, amounts, IBAN, email slots. Turning it off reverts to auto."
                 >
                   {manualOn ? 'Manual mode: on' : 'Manual mode'}
                 </button>
