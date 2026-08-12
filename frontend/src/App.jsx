@@ -13,7 +13,7 @@ export default function App() {
         <span className="brand">
           bigi<span className="dot">.</span>
         </span>
-        <span className="brand-sub">Drittschuldnererklärung</span>
+        <span className="brand-sub">Third-party debtor declaration generator</span>
         <span className="nav-spacer" />
         <div className="navlinks">
           <button

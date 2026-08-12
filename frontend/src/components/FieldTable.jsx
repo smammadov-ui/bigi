@@ -13,11 +13,18 @@ const META = new Set(['warnings', 'halted', 'halt_reasons', 'edited_fields']);
 
 export default function FieldTable({ parsed, editable = false, busy = false, onApply }) {
   const [edits, setEdits] = useState({});
+  // Minimized by default — the long key/value list is reference material.
+  // Manual mode auto-expands it (the fields are the editing surface there).
+  const [open, setOpen] = useState(false);
 
   // New result -> drop stale edits.
   useEffect(() => {
     setEdits({});
   }, [parsed]);
+
+  useEffect(() => {
+    if (editable) setOpen(true);
+  }, [editable]);
 
   if (!parsed) return null;
   const keys = Object.keys(parsed).filter((k) => !META.has(k));
@@ -35,7 +42,20 @@ export default function FieldTable({ parsed, editable = false, busy = false, onA
 
   return (
     <div className="rail-card">
-      <div className="rail-label">Parsed fields</div>
+      <div className="rail-head">
+        <span className="rail-label">Parsed fields</span>
+        <button
+          type="button"
+          className="badge"
+          onClick={() => setOpen((v) => !v)}
+          title={open ? 'Minimize' : 'Expand'}
+          style={{ cursor: 'pointer', background: 'transparent',
+                   border: '1px solid #2c3440', color: '#aeb6c2' }}
+        >
+          {open ? '▾ hide' : `▸ ${keys.length} fields`}
+        </button>
+      </div>
+      {open && (
       <div className="pf-list">
         {keys.map((k) => {
           const v = parsed[k];
@@ -70,7 +90,8 @@ export default function FieldTable({ parsed, editable = false, busy = false, onA
           );
         })}
       </div>
-      {editable && (
+      )}
+      {open && editable && (
         <button
           className="btn small primary"
           style={{ marginTop: 10 }}
