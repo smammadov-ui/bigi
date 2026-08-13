@@ -39,7 +39,16 @@ def compute_seized_amount(scenario: str, parsed: dict, balance: dict, seizure_ch
         return {**_min_claim_available(claim, available), "warnings": warnings}
 
     if scenario == Scenario.S6B.value:
-        # Remaining transferable balance for T11.
+        # Remaining transferable balance for T11. Funds already captured by
+        # settling seizures (PendingTransferApproval) still read on the wallets
+        # but are spoken for — only the rest is transferable (FPOPCL-31278).
+        settling = seizure_check.get("settling") or []
+        captured = round(sum(float(s.get("seized_amount") or 0) for s in settling), 2)
+        if available is not None and captured > 0:
+            available = round(max(float(available) - captured, 0.0), 2)
+            warnings.append(
+                f"available balance reduced by {captured:.2f} EUR already captured "
+                "by seizure(s) pending transfer approval")
         return {**_min_claim_available(claim, available), "warnings": warnings}
 
     # All other scenarios declare no seized amount (T6 renders 0,00 by default).

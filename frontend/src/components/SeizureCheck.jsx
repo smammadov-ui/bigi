@@ -1,17 +1,31 @@
 import React from 'react';
+import InfoBadge from './InfoBadge.jsx';
+
+// German money formatter for the captured amount on settling seizures
+// (mirrors BalancePanel's local helper).
+function de(n) {
+  const x = Number(n);
+  if (Number.isNaN(x)) return '—';
+  return x.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 
 // Ongoing (Processing) seizures check (rail card): competing count drives the
 // S1/S2 split. Also surfaces the ignored-seizure notes (own case,
-// created-after-this-case) and any error / "assumed" state from the BO check.
-export default function SeizureCheck({ check }) {
+// created-after-this-case), settling seizures (PendingTransferApproval —
+// captured funds subtracted from the closure coverage, FPOPCL-31278) and any
+// error / "assumed" state from the BO check. FYI-grade pipeline notes about
+// settling seizures arrive via `notes` and hide behind the ⓘ badge.
+export default function SeizureCheck({ check, notes }) {
   if (!check) return null;
   const n = check.processing_count || 0;
   const seizures = check.seizures || [];
+  const settling = check.settling || [];
 
   return (
     <div className="rail-card">
       <div className="rail-head">
         <span className="rail-label">Seizure check</span>
+        <InfoBadge notes={notes} />
         <span className={`badge ${n > 0 ? 't2' : 't1'}`}>
           {n > 0 ? `${n} ongoing` : 'none ongoing'}
         </span>
@@ -64,6 +78,24 @@ export default function SeizureCheck({ check }) {
         </>
       ) : (
         !check.error && <div className="seiz-count">no ongoing seizures</div>
+      )}
+
+      {settling.length > 0 && (
+        <>
+          <div className="seiz-count">
+            {settling.length} pending transfer approval (captured funds)
+          </div>
+          {settling.map((s) => (
+            <div className="seiz-item" key={s.id}>
+              <div className="case">{s.caseNumber || s.id}</div>
+              <div className="meta">
+                {s.status}
+                {s.created ? ` · ${s.created}` : ''}
+                {s.seized_amount != null ? ` · captured €${de(s.seized_amount)}` : ''}
+              </div>
+            </div>
+          ))}
+        </>
       )}
     </div>
   );

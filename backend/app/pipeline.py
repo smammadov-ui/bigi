@@ -281,6 +281,13 @@ def _run_checks_and_compose(db: Session, client, raw_text: str, parsed: dict,
     if sc.get("ignored_later"):
         warnings.append(
             f"{len(sc['ignored_later'])} junior Processing seizure(s) excluded (created after this case)")
+    if sc.get("settling"):
+        _captured = round(sum(float(s.get("seized_amount") or 0)
+                              for s in sc["settling"]), 2)
+        warnings.append(
+            f"{len(sc['settling'])} seizure(s) pending transfer approval hold "
+            f"{_captured:.2f} EUR captured funds — not competing Processing "
+            "seizures, but subtracted from the available balance for closure coverage")
 
     # --- Step 6: balance (EUR-only; wallets already fetched during matching) ---
     if not uuid:

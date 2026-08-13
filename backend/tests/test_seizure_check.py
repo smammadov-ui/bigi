@@ -450,3 +450,60 @@ def test_own_case_check_excludes_only_edge_matches():
                                  "u1", ticket_case_ref="82611302")
     assert [s["id"] for s in out["ignored_same_case"]] == ["own"]
     assert [s["id"] for s in out["seizures"]] == ["aok"]     # competing, in the letter
+
+
+# --- FPOPCL-31278: settling seizures (PendingTransferApproval) ----------------
+
+
+ENBIO_SETTLING = {"id": "pta1", "status": "PendingTransferApproval",
+                  "created": "2026-05-21T07:40:42Z",
+                  "caseNumber": "1127/277/51474 - E02 - 1668/26 F",
+                  "seizedAmount": 6.97, "amount": 6.97}
+
+
+def test_settling_seizure_reported_not_counted_as_processing():
+    # A PendingTransferApproval seizure never flips S1->S2, but its captured
+    # amount is surfaced for the closure coverage test.
+    out = check_ongoing_seizures(FakeClient(seizures=[ENBIO_SETTLING]), "u1")
+    assert out["processing_count"] == 0
+    assert out["seizures"] == []
+    assert [s["id"] for s in out["settling"]] == ["pta1"]
+    assert out["settling"][0]["seized_amount"] == 6.97
+    assert out["settling"][0]["claim_amount"] == 6.97
+    assert out["settling"][0]["caseNumber"] == "1127/277/51474 - E02 - 1668/26 F"
+
+
+def test_settling_row_built_from_listing_without_detail_read():
+    # Listing rows carry seizedAmount directly (verified against real BO) —
+    # no get_seizure call must be made for settling rows.
+    client = FakeClient(seizures=[ENBIO_SETTLING],
+                        get_exc=BOError("get_seizure", 500, "must not be called"))
+    out = check_ongoing_seizures(client, "u1")
+    assert [s["id"] for s in out["settling"]] == ["pta1"]
+
+
+def test_settling_own_case_is_excluded():
+    # The ticket's OWN seizure reaching PendingTransferApproval is not someone
+    # else's captured money — it must not reduce the available balance.
+    out = check_ongoing_seizures(FakeClient(seizures=[ENBIO_SETTLING]), "u1",
+                                 ticket_case_ref="1127/277/51474 - E02 - 1668/26 F")
+    assert out["settling"] == []
+
+
+def test_settling_does_not_affect_processing_filters():
+    # Processing + settling mix: counts stay independent.
+    seizures = [{"id": "p1", "status": "Processing"}, ENBIO_SETTLING]
+    details = {"p1": {"id": "p1", "status": "Processing", "created": "2026-01-01",
+                      "caseNumber": "CN-COMPETING-1"}}
+    out = check_ongoing_seizures(FakeClient(seizures=seizures, details=details), "u1")
+    assert out["processing_count"] == 1
+    assert [s["id"] for s in out["settling"]] == ["pta1"]
+
+
+def test_held_funds_include_settling():
+    from app.checks import held_funds
+
+    out = check_ongoing_seizures(FakeClient(seizures=[ENBIO_SETTLING]), "u1")
+    held = held_funds(out)
+    assert held["held_eur"] == 6.97
+    assert held["held_eur_de"] == "6,97"

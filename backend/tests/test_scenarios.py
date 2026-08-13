@@ -570,3 +570,53 @@ def test_fpopcl_31102_shape_resolves_s1(monkeypatch, db, client):
     assert r["scenario"] == "S1"
     assert r["declaration"]["template"] == "T1"
     assert "138,03 EUR" in r["declaration"]["text"]
+
+
+# --- FPOPCL-31278: CLOSING with a settling seizure (PendingTransferApproval) ---
+
+
+SETTLING = {"id": 7, "caseNumber": "1127/277/51474 - E02 - 1668/26 F",
+            "status": "PendingTransferApproval",
+            "created": "2026-05-21T07:40:42Z", "seizedAmount": 6.97, "amount": 6.97}
+
+
+def test_s6a_closing_covered_by_settling_seizure(monkeypatch, db, client):
+    # FPOPCL-31278 (Enbio UG): the whole 6.97 balance is already captured by a
+    # prior seizure pending transfer approval — the wallet still reads 6.97,
+    # but a new seizure gets nothing -> treat as zero balance -> S6A/T10.
+    fx = company(status="ClosureScheduled",
+                 wallets=[{"id": "w1", "iban": IBAN, "name": "Main",
+                           "balance": 6.97, "currency": "EUR"}],
+                 seizures=[SETTLING])
+    r = run(monkeypatch, db, fx)
+    assert r["scenario"] == "S6A"
+    assert r["declaration"]["template"] == "T10"
+    sc = r["seizure_check"]
+    assert sc["processing_count"] == 0                 # never flips S1/S2 logic
+    assert [s["id"] for s in sc["settling"]] == [7]
+    assert any("pending transfer approval" in n for n in r["plan"]["notes"])
+    assert r["balance"]["held_eur"] == 6.97
+    assert any("pending transfer approval" in w for w in r["warnings"])
+
+
+def test_s6b_partial_settling_capture_reduces_remaining(monkeypatch, db, client):
+    # Only part of the balance is captured by the settling seizure: still S6B,
+    # but the T11 "Restbetrag" is what actually remains transferable.
+    partial = {**SETTLING, "seizedAmount": 4500.0, "amount": 4500.0}
+    fx = company(status="ClosureScheduled", seizures=[partial])  # balance 5000
+    r = run(monkeypatch, db, fx)
+    assert r["scenario"] == "S6B"
+    # min(claim 3000, effective available 5000 - 4500 = 500) -> 500
+    assert r["amount"]["seized_eur"] == 500.0
+    assert "500,00 EUR" in r["declaration"]["text"]
+    assert any("already captured" in w for w in r["warnings"])
+
+
+def test_settling_own_case_does_not_cover_closing(monkeypatch, db, client):
+    # The ticket's OWN seizure in PendingTransferApproval is not someone else's
+    # money — it must not flip the closure to S6A.
+    own_settling = {**SETTLING, "caseNumber": "261423924045VO05"}  # == ticket ref
+    fx = company(status="ClosureScheduled", seizures=[own_settling])  # balance 5000
+    r = run(monkeypatch, db, fx)
+    assert r["scenario"] == "S6B"
+    assert r["seizure_check"]["settling"] == []

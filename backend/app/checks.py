@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 
-from .bo_client import BOError, is_processing
+from .bo_client import BOError, is_processing, is_settling
 from .formatting import de_amount, de_date
 
 # ---------------------------------------------------------------------------
@@ -202,9 +202,24 @@ def _assumed_seizures(error: str) -> dict:
         "seizures": [],
         "ignored_same_case": [],
         "ignored_later": [],
+        "settling": [],
         "own_case_missing": True,
         "error": error,
         "assumed": True,
+    }
+
+
+def _settling_row(s: dict) -> dict:
+    """Compact row for a settling seizure, straight from the LISTING (the
+    listing rows carry ``seizedAmount``/``amount`` — no detail read needed;
+    verified against real BO for FPOPCL-31278)."""
+    return {
+        "id": s.get("id"),
+        "caseNumber": s.get("caseNumber", ""),
+        "status": s.get("status"),
+        "created": s.get("created"),
+        "seized_amount": s.get("seizedAmount"),
+        "claim_amount": s.get("amount"),
     }
 
 
@@ -212,12 +227,20 @@ def check_ongoing_seizures(client, company_uuid: str, ticket_case_ref: str = "")
     """Competing Processing seizures for the S1/S2 + S6A decisions.
 
     Returns ``{processing_count, seizures, ignored_same_case, ignored_later,
-    own_case_missing, error, assumed}``. ``seizures`` are the COMPETING prior
-    seizures only — the ticket's own case and provably-junior competitors are
-    filtered out (but reported), so:
+    settling, own_case_missing, error, assumed}``. ``seizures`` are the
+    COMPETING prior seizures only — the ticket's own case and provably-junior
+    competitors are filtered out (but reported), so:
 
       - ``processing_count == 0``  -> S1 territory (no Bestehende Pfändungen)
       - ``processing_count >= 1``  -> S2 / S6A-covered territory
+
+    ``settling`` are OTHER seizures in a settling status (see
+    ``bo_client.SETTLING_STATUSES``, e.g. ``PendingTransferApproval``): their
+    ``seized_amount`` is already captured and merely awaits payout, so the
+    scenario resolver subtracts it from the available balance in the S6A/S6B
+    coverage test (FPOPCL-31278). They are NOT competing Processing seizures —
+    they never flip S1 -> S2. Junior filtering does not apply to them either:
+    coverage is about where the money physically is, not about seniority.
     """
     if not company_uuid:
         return _assumed_seizures("account not resolved — ongoing-seizure check skipped")
@@ -226,6 +249,12 @@ def check_ongoing_seizures(client, company_uuid: str, ticket_case_ref: str = "")
         listing = client.list_seizures(company_uuid)
         raw = listing.get("seizures", []) or []
         processing = [s for s in raw if is_processing(s)]
+        # Settling seizures (captured funds pending transfer approval) — the
+        # ticket's own case is not "someone else's captured money", so it is
+        # excluded the same way as in the Processing pass.
+        settling = [_settling_row(s) for s in raw
+                    if is_settling(s)
+                    and not same_case(s.get("caseNumber", ""), ticket_case_ref)]
 
         seizures: list[dict] = []
         ignored: list[dict] = []
@@ -290,10 +319,14 @@ def check_ongoing_seizures(client, company_uuid: str, ticket_case_ref: str = "")
 
     seizures.sort(key=lambda s: str(s.get("created") or ""))
     ignored_later.sort(key=lambda s: str(s.get("created") or ""))
+    settling.sort(key=lambda s: str(s.get("created") or ""))
     return {
         "processing_count": len(seizures),
         "seizures": seizures,
         "ignored_same_case": ignored,
+        # Settling (e.g. PendingTransferApproval) seizures other than the own
+        # case — captured funds the S6A/S6B coverage test must subtract.
+        "settling": settling,
         # Competing Processing seizures dropped for being created after this
         # ticket's own case — surfaced so the operator sees what was excluded.
         "ignored_later": ignored_later,
@@ -347,11 +380,14 @@ def account_balance(wallets_items: list[dict] | None, *, error: str | None = Non
 
 
 def held_funds(seizure_check: dict) -> dict:
-    """Funds held under Processing seizures (own case included) — they live on
-    the seizure record, not the wallets endpoint (which reads ~0 for them).
-    Returns ``{held_eur, held_eur_de, client_total_eur, client_total_eur_de}``.
+    """Funds held under seizures (own case + competing Processing + settling) —
+    they live on the seizure record, not the wallets endpoint (which reads ~0
+    for them). Returns ``{held_eur, held_eur_de, client_total_eur,
+    client_total_eur_de}``.
     """
-    all_rows = (seizure_check.get("seizures") or []) + (seizure_check.get("ignored_same_case") or [])
+    all_rows = ((seizure_check.get("seizures") or [])
+                + (seizure_check.get("ignored_same_case") or [])
+                + (seizure_check.get("settling") or []))
     held = round(sum(float(s.get("seized_amount") or 0) for s in all_rows), 2)
     client_total = next(
         (s.get("client_total") for s in all_rows if s.get("client_total") is not None),

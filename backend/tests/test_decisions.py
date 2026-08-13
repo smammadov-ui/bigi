@@ -109,11 +109,22 @@ def test_recompose_role_flip_changes_document(monkeypatch, db, client):
 
 def test_recompose_email_template_and_subject(monkeypatch, db, client):
     m = _manual_from_run(monkeypatch, db)
-    d = {**m["decisions"], "template": "T11", "subject": "", "seizable_eur": "82,41"}
+    # Subject was prefilled with the T2 LETTER subject; switching to T11
+    # (unpinned) must re-derive the T11 email subject, NOT keep the old one.
+    assert "Drittschuldner" in m["decisions"]["subject"]   # auto T2 subject
+    d = {**m["decisions"], "template": "T11", "seizable_eur": "82,41"}
     out = compose_from_decisions(db, d, m["context"], m["auto"])
     assert out["declaration"]["kind"] == "email"
     assert out["declaration"]["subject"].startswith("Konto geschlossen")
     assert "82,41" in out["declaration"]["text"]     # German-comma amount parsed
+
+
+def test_pinned_subject_survives_template_change(monkeypatch, db, client):
+    m = _manual_from_run(monkeypatch, db)
+    d = {**m["decisions"], "template": "T11", "subject": "My custom subject",
+         "subject_pinned": True}
+    out = compose_from_decisions(db, d, m["context"], m["auto"])
+    assert out["declaration"]["subject"] == "My custom subject"
 
 
 def test_recompose_requires_valid_template(db, client):

@@ -43,7 +43,7 @@ _RATIONALE = {
     Scenario.S4_NO_IBAN: "No match, no IBAN provided → T7 (ask for IBAN).",
     Scenario.S4_IBAN: "No match, IBAN provided but unknown → T8 (ask for correct IBAN).",
     Scenario.S5: "Request against a physical person but the account is a Company → T9 (attach the received document).",
-    Scenario.S6A: "Closing and covered (Processing seizure or zero balance) → T10.",
+    Scenario.S6A: "Closing and covered (Processing seizure, zero balance, or balance already captured by settling seizures) → T10.",
     Scenario.S6B: "Closing with available balance, no Processing seizure → T11 — only the remaining balance can be transferred (handled in BO, not by bigi).",
     Scenario.INSOLVENCY: "Open MNL21 (insolvency) → T4 email; the seizure cannot be processed while insolvency runs.",
     Scenario.RFI: "Open MNL22 (information request) → T5: gather the requested data, no seizure, no §840 letter.",
@@ -132,7 +132,19 @@ def resolve_scenario(match: dict, checks: dict, parsed: dict) -> tuple[str, list
             return Scenario.ROUTED_OUT.value, notes
         if balance.get("non_eur"):
             notes.append("non-EUR wallets excluded from available_eur — operator should verify coverage")
-        covered = processing_count > 0 or float(available) <= 0
+        # Funds already CAPTURED by settling seizures (PendingTransferApproval)
+        # still show on the wallets until the payout runs, but a new seizure
+        # gets nothing from them — subtract before the coverage test (ops rule,
+        # FPOPCL-31278: fully captured -> treat as zero balance -> S6A).
+        settling = seizure_check.get("settling") or []
+        captured = round(sum(float(s.get("seized_amount") or 0) for s in settling), 2)
+        effective = round(float(available) - captured, 2)
+        if captured > 0:
+            notes.append(
+                f"{captured:.2f} EUR of the available balance already captured by "
+                f"{len(settling)} seizure(s) pending transfer approval — "
+                f"effective available {max(effective, 0.0):.2f} EUR")
+        covered = processing_count > 0 or effective <= 0
         return (Scenario.S6A.value if covered else Scenario.S6B.value), notes
 
     if bucket == AccountStatusBucket.UNKNOWN.value:

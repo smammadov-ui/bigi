@@ -308,9 +308,14 @@ export default function Home() {
     ...allPipeline.filter((w) => w.startsWith('workspaces') || w.includes('searched across workspaces')),
   ];
   const balanceNotes = allPipeline.filter((w) => w.toLowerCase().includes('non-eur'));
+  // Settling-seizure notes (PendingTransferApproval / captured funds) belong
+  // to the Seizure check card's ⓘ badge, not the full-width banners.
+  const seizureNotes = allPipeline.filter((w) =>
+    w.toLowerCase().includes('pending transfer approval')
+  );
   // Everything else stays a visible banner (resolver notes, amount fallbacks…).
   const pipelineWarnings = allPipeline.filter(
-    (w) => !accountNotes.includes(w) && !balanceNotes.includes(w)
+    (w) => !accountNotes.includes(w) && !balanceNotes.includes(w) && !seizureNotes.includes(w)
   );
 
   return (
@@ -528,6 +533,7 @@ export default function Home() {
                   autoDecisions={autoDecisions}
                   manual={result.manual}
                   warnings={composeWarnings}
+                  effectiveSubject={result.declaration?.subject}
                   busy={busy}
                   onChange={updateDecisions}
                 />
@@ -548,7 +554,7 @@ export default function Home() {
                             notes={accountNotes} />
               <AlertsPanel alerts={result.alerts} />
               <BalancePanel balance={result.balance} notes={balanceNotes} />
-              <SeizureCheck check={result.seizure_check} />
+              <SeizureCheck check={result.seizure_check} notes={seizureNotes} />
               <FieldTable parsed={parsed} editable={manualOn} busy={busy}
                           onApply={rerunWithFields} />
             </div>

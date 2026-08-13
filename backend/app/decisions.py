@@ -118,7 +118,10 @@ def build_manual(*, parsed: dict | None, scenario=None, plan=None,
 
     decisions = {
         "template": plan.get("template") or "",
+        # Subject AUTO-follows the template unless the operator pins it by
+        # editing (subject_pinned). Prefilled for display only.
         "subject": declaration.get("subject") or "",
+        "subject_pinned": False,
         "recipient_email": str(fields.get("creditor_email") or ""),
         "seized_iban": {
             "value": account.get("seized_iban") or "",
@@ -244,8 +247,9 @@ def compose_from_decisions(db, decisions: dict, context: dict,
         seized_eur=seized_eur,
         scenario=scenario_for_flags or "",
     )
-    subject = str(decisions.get("subject") or "").strip() or build_subject_for_template(
-        template_id, fields)
+    # Subject follows the template unless the operator pinned a custom one.
+    pinned = str(decisions.get("subject") or "").strip() if decisions.get("subject_pinned") else ""
+    subject = pinned or build_subject_for_template(template_id, fields)
 
     manual_template = bool(auto.get("template")) and template_id != auto.get("template")
     return {

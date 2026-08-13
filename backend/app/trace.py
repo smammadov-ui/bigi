@@ -59,6 +59,12 @@ def build_trace(d: dict, include_document: bool = False) -> dict:
             "ignored_later": len(sc.get("ignored_later") or []),
             "ignored_later_cases": [str(s.get("caseNumber") or s.get("id"))
                                     for s in (sc.get("ignored_later") or [])],
+            "settling_count": len(sc.get("settling") or []),
+            "settling_cases": [str(s.get("caseNumber") or s.get("id"))
+                               for s in (sc.get("settling") or [])],
+            "settling_captured_eur": round(sum(
+                float(s.get("seized_amount") or 0)
+                for s in (sc.get("settling") or [])), 2),
             "own_case_missing": sc.get("own_case_missing"),
             "assumed": sc.get("assumed"),
             "error": sc.get("error"),

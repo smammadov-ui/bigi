@@ -38,6 +38,7 @@ export default function DecisionPanel({
   autoDecisions,    // pristine auto copy (override badge)
   manual,           // result.manual: { auto, options, context }
   warnings,         // last recompose validation warnings
+  effectiveSubject, // the subject the backend just composed (auto-derived)
   busy,
   onChange,         // (nextDecisions) => void  (Home debounces + recomposes)
 }) {
@@ -73,7 +74,7 @@ export default function DecisionPanel({
     if (decisions.seized_iban?.value !== autoDecisions.seized_iban?.value)
       overrides.push('IBAN');
     if (
-      decisions.subject !== autoDecisions.subject ||
+      decisions.subject_pinned ||
       decisions.recipient_email !== autoDecisions.recipient_email
     )
       overrides.push('email');
@@ -130,12 +131,30 @@ export default function DecisionPanel({
         </div>
       )}
       <div className="field" style={{ marginBottom: 8 }}>
-        <label>Subject</label>
+        <label>
+          Subject
+          {decisions.subject_pinned ? (
+            <button
+              type="button"
+              className="badge"
+              onClick={() => set({ subject_pinned: false, subject: '' })}
+              title="Let the subject follow the template again"
+              style={{ marginLeft: 8, cursor: 'pointer', background: 'transparent',
+                       border: '1px solid #2c3440', color: '#aeb6c2' }}
+            >
+              ↺ auto
+            </button>
+          ) : (
+            <span className="muted small" style={{ marginLeft: 8 }}>
+              (follows the template)
+            </span>
+          )}
+        </label>
         <input
           type="text"
-          value={decisions.subject || ''}
+          value={decisions.subject_pinned ? (decisions.subject || '') : (effectiveSubject || '')}
           placeholder="(auto-derived from the template)"
-          onChange={(e) => set({ subject: e.target.value })}
+          onChange={(e) => set({ subject: e.target.value, subject_pinned: true })}
         />
       </div>
 

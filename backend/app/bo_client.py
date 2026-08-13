@@ -46,6 +46,20 @@ def is_processing(seizure: dict) -> bool:
     return status_name((seizure or {}).get("status")) == "Processing"
 
 
+# Statuses of seizures that have already CAPTURED funds and are settling —
+# waiting for the payout to the creditor to be approved/executed. The captured
+# money still shows on the EUR wallets until the transfer runs, but it is
+# spoken for: a new seizure gets nothing from it. Ops rule (FPOPCL-31278,
+# Enbio UG): a CLOSING account whose balance is fully captured by such a
+# seizure counts as zero balance -> S6A, not S6B.
+SETTLING_STATUSES = frozenset({"PendingTransferApproval"})
+
+
+def is_settling(seizure: dict) -> bool:
+    """True iff the seizure holds captured funds pending transfer approval."""
+    return status_name((seizure or {}).get("status")) in SETTLING_STATUSES
+
+
 class BOClient:
     """Thin httpx wrapper over the Finom cstools / transaction-monitoring API.
 
