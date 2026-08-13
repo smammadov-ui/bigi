@@ -118,9 +118,12 @@ def build_manual(*, parsed: dict | None, scenario=None, plan=None,
 
     decisions = {
         "template": plan.get("template") or "",
-        # Subject AUTO-follows the template unless the operator pins it by
-        # editing (subject_pinned). Prefilled for display only.
-        "subject": declaration.get("subject") or "",
+        # Subject AUTO-follows the template: it is NOT prefilled here (a
+        # prefilled value goes stale the moment the template changes — live
+        # bug: a T7 subject still shown after switching to T6). The composed
+        # document carries the effective subject; the operator can override it,
+        # which sets subject_pinned.
+        "subject": "",
         "subject_pinned": False,
         "recipient_email": str(fields.get("creditor_email") or ""),
         "seized_iban": {

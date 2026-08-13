@@ -43,7 +43,8 @@ def test_manual_block_s2(monkeypatch, db, client):
     assert all(row["auto_role"] == row["role"] for row in d["seizures"])
     assert d["own_case_amount"] == 138.03
     assert d["seized_iban"]["value"] == IBAN
-    assert d["subject"]                      # letter subject prefilled
+    # Subject is NOT prefilled — it follows the template (see compose).
+    assert d["subject"] == "" and d["subject_pinned"] is False
     assert m["options"]["status_bucket"] == "OPEN"
     assert any(w["iban"] == IBAN for w in m["options"]["wallets"])
     assert m["context"]["fields"]["case_references"] == CASE_REF
@@ -109,9 +110,10 @@ def test_recompose_role_flip_changes_document(monkeypatch, db, client):
 
 def test_recompose_email_template_and_subject(monkeypatch, db, client):
     m = _manual_from_run(monkeypatch, db)
-    # Subject was prefilled with the T2 LETTER subject; switching to T11
-    # (unpinned) must re-derive the T11 email subject, NOT keep the old one.
-    assert "Drittschuldner" in m["decisions"]["subject"]   # auto T2 subject
+    # Auto (T2) composes the LETTER subject; switching to T11 unpinned must
+    # re-derive the T11 EMAIL subject, never keep the previous one.
+    auto_out = compose_from_decisions(db, m["decisions"], m["context"], m["auto"])
+    assert "Drittschuldner" in auto_out["declaration"]["subject"]
     d = {**m["decisions"], "template": "T11", "seizable_eur": "82,41"}
     out = compose_from_decisions(db, d, m["context"], m["auto"])
     assert out["declaration"]["kind"] == "email"
