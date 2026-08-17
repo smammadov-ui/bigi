@@ -12,9 +12,19 @@ visible warning.
 """
 from __future__ import annotations
 
+import threading
 from contextlib import contextmanager
 
 from .bo_client import BOError
+
+# The BO workspace selection is SERVER-SIDE per-user state. Two pipeline runs
+# widening/restoring it concurrently would interleave — one run's restore could
+# narrow the context mid-search for the other, silently dropping a workspace
+# (audit B8). FastAPI runs sync endpoints in a threadpool, so serialize the
+# widen→work→restore critical section with a process-wide lock. bigi is a
+# single-operator tool, so the added latency (one case at a time) is a
+# non-issue; correctness of the legal search wins.
+_WORKSPACE_LOCK = threading.Lock()
 
 
 @contextmanager
@@ -25,9 +35,17 @@ def all_workspaces(client):
     the caller turns it into warnings/reasons. Restoration runs in ``finally``
     even when the pipeline raises; a failed restore is surfaced via
     ``info["restore_error"]`` (checked after the with-block).
+
+    The whole span is guarded by ``_WORKSPACE_LOCK`` so concurrent runs cannot
+    interleave their widen/restore of the shared server-side context (B8).
     """
     info = {"available": [], "original": [], "switched": False,
             "error": None, "restore_error": None}
+    with _WORKSPACE_LOCK:
+        yield from _all_workspaces_locked(client, info)
+
+
+def _all_workspaces_locked(client, info):
     try:
         profile = client.whoami() or {}
         available = [str(c) for c in (profile.get("contexts") or []) if c]
