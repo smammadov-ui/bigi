@@ -178,20 +178,26 @@ export default function DeclarationEditor({ declaration, caseRef, onToast, worki
   const [text, setText] = useState(declaration?.text || '');
   const [editing, setEditing] = useState(false);
   // Manual mode regenerates the document on decision edits; if the operator
-  // had ALSO hand-edited the text, that edit is replaced — say so once.
+  // had ALSO hand-edited the text, that edit is replaced — say so once. The
+  // notice is driven by a real "dirty" flag, not a text-diff heuristic, so it
+  // no longer false-fires across cases or misses a revert-to-identical
+  // recompose (audit B17). Home keys this component per case, so a genuinely
+  // new case remounts fresh; only same-case recomposes reach the effect below.
   const [regenNotice, setRegenNotice] = useState(false);
-  const prevDecl = useRef(declaration?.text || '');
+  const [dirty, setDirty] = useState(false);
+  const baseline = useRef(declaration?.text || ''); // last composed text shown
 
-  // Reset the editor when a new declaration arrives (new run / re-pick /
-  // manual-mode recompose).
   useEffect(() => {
     const incoming = declaration?.text || '';
-    setRegenNotice(
-      prevDecl.current !== incoming && text !== prevDecl.current && text !== ''
-    );
-    prevDecl.current = incoming;
-    setText(incoming);
-    setEditing(false);
+    if (incoming !== baseline.current) {
+      // The composed document changed under us (a recompose / manual-off
+      // revert). Warn only if the operator had unsaved hand-edits.
+      if (dirty && text !== incoming) setRegenNotice(true);
+      baseline.current = incoming;
+      setText(incoming);
+      setDirty(false);
+      // Preserve the operator's Preview/Edit choice — do NOT force preview.
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [declaration]);
 
@@ -380,7 +386,10 @@ export default function DeclarationEditor({ declaration, caseRef, onToast, worki
              style={{ opacity: working ? 0.45 : 1, transition: 'opacity .25s ease' }}>
           <textarea
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              setText(e.target.value);
+              setDirty(true);
+            }}
             spellCheck={false}
             autoFocus
           />

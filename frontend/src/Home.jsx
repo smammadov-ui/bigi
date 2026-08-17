@@ -45,6 +45,9 @@ export default function Home() {
   const [autoDeclaration, setAutoDeclaration] = useState(null);
   const [composeWarnings, setComposeWarnings] = useState([]);
   const composeTimer = useRef(null);
+  // Bumped on every full run so the document editor remounts per case (a fresh
+  // case must not inherit the previous case's hand-edit / notice state — B17).
+  const [caseKey, setCaseKey] = useState(0);
 
   // Async-work indicator (WorkBar + status chip). `working` carries the
   // current stage label; `workHost` says which card hosts the bar ('input'
@@ -57,18 +60,35 @@ export default function Home() {
   const [workHost, setWorkHost] = useState('doc');
   const [flash, setFlash] = useState(false);
   const flashTimer = useRef(null);
-  const stageTimer = useRef(null);
+  // Number of tracked() operations currently in flight — the chip/bar clears
+  // only when this returns to 0 (audit B6: a shared timer ref used to let the
+  // first finisher hide the other op's chip and leak an interval forever).
+  const workCount = useRef(0);
+
+  // Generation guards (audit B5). `caseSeq` bumps whenever a full pipeline run
+  // starts (fetch / generate / pick / re-run-fields) — it identifies the
+  // current case. `composeSeq` bumps on each manual-mode recompose. A response
+  // is applied only if it is still the latest of its kind AND (for a recompose)
+  // the case has not changed underneath it — so an out-of-order or cross-case
+  // response can never paint the wrong document.
+  const caseSeq = useRef(0);
+  const composeSeq = useRef(0);
 
   async function tracked(labels, fn, host = 'doc') {
     const stages = Array.isArray(labels) ? labels : [labels];
     let i = 0;
+    let stageTimer = null; // per-invocation, never shared
+    workCount.current += 1;
     const delay = setTimeout(() => {
       setWorkHost(host);
       setWorking(stages[0]);
-      stageTimer.current = setInterval(() => {
+      stageTimer = setInterval(() => {
         i = Math.min(i + 1, stages.length - 1);
         setWorking(stages[i]);
-        if (i === stages.length - 1) clearInterval(stageTimer.current);
+        if (i === stages.length - 1) {
+          clearInterval(stageTimer);
+          stageTimer = null;
+        }
       }, 1300);
     }, 250);
     let ok = false;
@@ -78,8 +98,9 @@ export default function Home() {
       return out;
     } finally {
       clearTimeout(delay);
-      clearInterval(stageTimer.current);
-      setWorking(null);
+      if (stageTimer) clearInterval(stageTimer);
+      workCount.current = Math.max(0, workCount.current - 1);
+      if (workCount.current === 0) setWorking(null); // clear only when nothing else runs
       if (ok && host === 'doc') {
         setFlash(true);
         clearTimeout(flashTimer.current);
@@ -100,6 +121,7 @@ export default function Home() {
     setResult(res);
     setJiraMeta(meta || null);
     setActiveRaw(srcRaw);
+    setCaseKey((k) => k + 1); // new case -> remount the document editor
     setManualOn(false);
     setDecisions(res?.manual?.decisions || null);
     setAutoDecisions(res?.manual?.decisions || null);
@@ -134,6 +156,10 @@ export default function Home() {
   async function recompose(d) {
     const m = result?.manual;
     if (!m || !d?.template) return;
+    const myCase = caseSeq.current;        // the case this recompose belongs to
+    const myCompose = ++composeSeq.current; // the latest recompose
+    const stale = () =>
+      myCase !== caseSeq.current || myCompose !== composeSeq.current;
     try {
       const res = await tracked(`recomposing — ${d.template}…`, () =>
         postCompose({
@@ -142,9 +168,11 @@ export default function Home() {
           auto: m.auto,
         })
       );
+      if (stale()) return; // a newer recompose or a new case superseded this one
       setResult((r) => ({ ...r, declaration: res.declaration }));
       setComposeWarnings(res.warnings || []);
     } catch (e) {
+      if (stale()) return;
       setComposeWarnings([`compose failed: ${e.message}`]);
     }
   }
@@ -157,6 +185,7 @@ export default function Home() {
       setError('No source text for this result — fetch or paste the ticket again.');
       return;
     }
+    const gen = ++caseSeq.current;
     setBusy(true);
     setError('');
     try {
@@ -164,10 +193,11 @@ export default function Home() {
       const res = await tracked(PIPELINE_STAGES, () =>
         postDeclaration(text, uuid, false, overrides)
       );
+      if (gen !== caseSeq.current) return; // superseded by a newer run
       showResult(res, jiraMeta, text);
       setManualOn(true); // the operator was clearly working manually
     } catch (e) {
-      setError(e.message);
+      if (gen === caseSeq.current) setError(e.message);
     } finally {
       setBusy(false);
     }
@@ -201,13 +231,15 @@ export default function Home() {
       setError('Paste a ticket first.');
       return;
     }
+    const gen = ++caseSeq.current;
     setBusy(true);
     setError('');
     try {
       const res = await tracked(PIPELINE_STAGES, () => postDeclaration(text), 'input');
+      if (gen !== caseSeq.current) return;
       showResult(res, null, text);
     } catch (e) {
-      setError(e.message);
+      if (gen === caseSeq.current) setError(e.message);
     } finally {
       setBusy(false);
     }
@@ -219,12 +251,14 @@ export default function Home() {
       setError('Enter a Jira issue key or link.');
       return;
     }
+    const gen = ++caseSeq.current;
     setBusy(true);
     setError('');
     try {
       const res = await tracked(
         ['fetching the ticket from Jira…', ...PIPELINE_STAGES],
         () => jiraFetch(k), 'input');
+      if (gen !== caseSeq.current) return;
       const { jira, ...pipeline } = res;
       const meta = jira
         ? { key: jira.key, summary: jira.summary }
@@ -235,7 +269,7 @@ export default function Home() {
       // Show the canonical key the server resolved (a pasted link becomes its key).
       setIssueKey(meta.key || k);
     } catch (e) {
-      setError(e.message);
+      if (gen === caseSeq.current) setError(e.message);
     } finally {
       setBusy(false);
     }
@@ -282,15 +316,17 @@ export default function Home() {
       );
       return;
     }
+    const gen = ++caseSeq.current;
     setBusy(true);
     setError('');
     try {
       const res = await tracked(PIPELINE_STAGES, () =>
         postDeclaration(text, uuid, noMatch)
       );
+      if (gen !== caseSeq.current) return;
       showResult(res, jiraMeta, text);
     } catch (e) {
-      setError(e.message);
+      if (gen === caseSeq.current) setError(e.message);
     } finally {
       setBusy(false);
     }
@@ -479,6 +515,7 @@ export default function Home() {
           <div className="results-grid">
             {result.declaration ? (
               <DeclarationEditor
+                key={caseKey}
                 declaration={result.declaration}
                 caseRef={caseRef}
                 onToast={setToast}

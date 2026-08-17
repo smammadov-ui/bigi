@@ -31,8 +31,15 @@ export default function App() {
         </div>
       </nav>
 
+      {/* Both screens stay MOUNTED (hidden via CSS) so navigating to Settings
+          never discards an in-progress case on Home (audit B18). */}
       <main className="content">
-        {screen === 'home' ? <Home /> : <Settings />}
+        <div style={{ display: screen === 'home' ? 'block' : 'none' }}>
+          <Home />
+        </div>
+        <div style={{ display: screen === 'settings' ? 'block' : 'none' }}>
+          <Settings />
+        </div>
       </main>
     </div>
   );

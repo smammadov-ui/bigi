@@ -171,7 +171,7 @@ export default function DecisionPanel({
                 {r.note}
                 {r.role !== r.auto_role ? ` · auto: ${ROLE_LABEL[r.auto_role]}` : ''}
               </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+              <div style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }}>
                 <select
                   value={r.role}
                   disabled={busy}
@@ -182,18 +182,15 @@ export default function DecisionPanel({
                   <option value="report">report in the letter</option>
                   <option value="ignore">ignore</option>
                 </select>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  style={{ width: 110 }}
-                  value={r.amount ?? ''}
-                  placeholder="amount €"
-                  onChange={(e) =>
-                    setRow(r.id, {
-                      amount: e.target.value === '' ? null : e.target.value,
-                    })
-                  }
-                />
+                {/* Read-only context: the captured amount comes from BO's
+                    seizure record and is embedded in the German bullet text;
+                    it is not separately editable (audit B7 — the old input did
+                    nothing). Correct the figure via the amounts fields below. */}
+                {r.amount != null && r.amount !== '' && (
+                  <span className="muted small" style={{ whiteSpace: 'nowrap' }}>
+                    €{r.amount}
+                  </span>
+                )}
               </div>
             </div>
           ))}
