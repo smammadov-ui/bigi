@@ -25,7 +25,7 @@ Shapes
 from __future__ import annotations
 
 from . import llm
-from .formatting import de_amount
+from .formatting import de_amount, parse_decimal
 from .schemas import BigiError
 from .settings_store import llm_config
 from .templates import (
@@ -70,7 +70,7 @@ TEMPLATE_CATALOG: list[dict] = [
      "needs": []},
 ]
 
-_META_FIELD_KEYS = frozenset({"warnings", "halted", "halt_reasons"})
+_META_FIELD_KEYS = frozenset({"warnings", "halted", "halt_reasons", "edited_fields"})
 
 # Letter templates whose [Seized amount] is the actually declared figure.
 _AMOUNT_TEMPLATES = ("T1", "T2", "T11")
@@ -94,13 +94,12 @@ def _row(r: dict, role: str, note: str) -> dict:
 
 
 def build_manual(*, parsed: dict | None, scenario=None, plan=None,
-                 declaration=None, account=None, balance=None,
+                 account=None, balance=None,
                  seizure_check=None, wallets=None) -> dict:
     """The ``manual`` block for a pipeline result — safe on partial data
     (pending selection / halted / routed out), so dead ends stay completable."""
     parsed = parsed or {}
     plan = plan or {}
-    declaration = declaration or {}
     account = account or {}
     balance = balance or {}
     sc = seizure_check or {}
@@ -152,22 +151,13 @@ def build_manual(*, parsed: dict | None, scenario=None, plan=None,
     }
 
 
-def _num(v):
-    """Lenient number: None/'' -> None; '1.234,56' / '1234.56' -> float."""
-    if v is None or v == "":
-        return None
-    if isinstance(v, (int, float)):
-        return float(v)
-    s = str(v).strip().replace(" ", "")
-    if "," in s:  # German decimal comma (thousands dots)
-        s = s.replace(".", "").replace(",", ".")
-    try:
-        return float(s)
-    except ValueError:
-        return None
+# Amount parsing reuses the locale-robust, tested parser (German AND US
+# separators) — an earlier local reimplementation mis-read US "1,234.56" as
+# 1.23456 (audit B2), which would have printed a wrong figure into the letter.
+_num = parse_decimal
 
 
-def validate_decisions(decisions: dict, context: dict, auto: dict | None) -> list[str]:
+def validate_decisions(decisions: dict, context: dict) -> list[str]:
     """Non-blocking contradiction warnings (+ the passive cross-hint). The
     operator is the authority — nothing here stops composing."""
     warnings: list[str] = []
@@ -227,13 +217,19 @@ def compose_from_decisions(db, decisions: dict, context: dict,
 
     fields = dict(context.get("fields") or {})
     # One German bullet per REPORTED seizure — same construction as the auto
-    # pipeline (structured description first, raw comment as fallback).
-    comments = [
-        (r.get("description_de") or r.get("comment") or "").strip()
-        for r in decisions.get("seizures") or []
-        if r.get("role") == "report"
-    ]
-    comments = [c for c in comments if c]
+    # pipeline (structured description first, raw comment as fallback). Only a
+    # template with a [Comment] slot (T2) consumes them; for any other template
+    # the bullets would fail the LLM bullet-count guard and waste a roundtrip
+    # (audit B4), so they are dropped.
+    if "[Comment]" in TEMPLATES[template_id]:
+        comments = [
+            (r.get("description_de") or r.get("comment") or "").strip()
+            for r in decisions.get("seizures") or []
+            if r.get("role") == "report"
+        ]
+        comments = [c for c in comments if c]
+    else:
+        comments = []
 
     seized_eur = _num(decisions.get("seizable_eur"))
     # Flags (Kundenbeziehung / Bestehende Pfändungen): the auto scenario only
@@ -263,6 +259,6 @@ def compose_from_decisions(db, decisions: dict, context: dict,
             "subject": subject,
             "composed_by": composed_by,
         },
-        "warnings": validate_decisions(decisions, context, auto),
+        "warnings": validate_decisions(decisions, context),
         "manual_template": manual_template,
     }

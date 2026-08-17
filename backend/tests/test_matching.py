@@ -671,6 +671,36 @@ def test_non_company_candidate_uuids_are_dropped():
     assert any("not" in r and bogus in r for r in out["reasons"])
 
 
+def test_all_invalid_candidates_fall_through_to_search(monkeypatch):
+    # B11: when EVERY ticket UUID 404s as a company, the dropped UUIDs must NOT
+    # be resurrected as picker candidates — identification falls through to the
+    # register/IBAN/name search instead.
+    b1 = "44444444-4444-4444-4444-444444444444"
+    b2 = "55555555-5555-5555-5555-555555555555"
+    fx = company()   # the real debtor, found by IBAN search below
+    stub = StubBO(fixtures={UUID: fx}, search_map={IBAN: UUID})
+    f = fields(company_uuid="", company_uuid_candidates=f"{b1}, {b2}")  # seized IBAN present
+    out = match_account(stub, f)
+    assert out["company_uuid"] == UUID          # resolved via search, not the picker
+    assert out["needs_selection"] is False
+    assert b1 not in [c.get("id") for c in (out.get("candidates") or [])]
+    assert any("no ticket UUID resolved to a BO company" in r for r in out["reasons"])
+
+
+def test_seized_iban_source_from_debtor_list(monkeypatch, db, client):
+    # B13: an IBAN taken from the debtor list is labelled "debtor_list", not
+    # "provided". Threaded parser -> pipeline -> matching.
+    from app import pipeline
+    from tests.fixtures import raw_ticket
+    fx = company()
+    stub = StubBO(fixtures={UUID: fx})
+    monkeypatch.setattr(pipeline, "BOClient", lambda *a, **k: stub)
+    f = fields(seized_iban="", debtor_ibans=IBAN)      # no seized field; one debtor IBAN
+    r = pipeline.run_pipeline(db, raw_ticket(f))
+    assert r["account"]["seized_iban"] == IBAN
+    assert r["account"]["seized_iban_source"] == "debtor_list"
+
+
 def test_name_similarity_units():
     from app.matching import _legal_form_key, _names_similar
 

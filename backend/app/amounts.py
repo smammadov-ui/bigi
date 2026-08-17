@@ -15,7 +15,7 @@ itself is handled in BO, never by bigi.
 """
 from __future__ import annotations
 
-from .formatting import parse_decimal
+from .formatting import iso_date_any, parse_decimal
 from .schemas import Scenario
 
 
@@ -29,7 +29,7 @@ def compute_seized_amount(scenario: str, parsed: dict, balance: dict, seizure_ch
     if scenario in (Scenario.S1.value, Scenario.S2.value):
         own_rows = seizure_check.get("ignored_same_case") or []
         if own_rows:
-            latest = max(own_rows, key=lambda s: str(s.get("created") or ""))
+            latest = max(own_rows, key=lambda s: iso_date_any(s.get("created") or ""))
             if latest.get("seized_amount") is not None:
                 return {"seized_eur": float(latest["seized_amount"]),
                         "source": "bo_own_case_seized_amount", "warnings": warnings}

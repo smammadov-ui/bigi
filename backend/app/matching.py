@@ -269,14 +269,19 @@ def _account_item(client, company_uuid: str, seized_iban: str) -> dict:
     """Account-status ``item`` for a KNOWN company, resilient to either endpoint
     being down for it. Prefer the stable short-info GET; if it is access-gated
     (e.g. HTTP 406 "Access is not allowed") or otherwise fails, fall back to the
-    cstools_search POST. If BOTH fail the error propagates to the caller."""
+    cstools_search POST. If BOTH fail an EMPTY item is returned (unknown status)
+    — the UUID is already identified, so a status read failing must not abort
+    the whole match (audit B14)."""
     try:
         item = _item_from_short_info(client.cstools_short_info(company_uuid), company_uuid)
         if item.get("accountStatus"):
             return item
     except BOError:
         pass  # short-info unavailable/gated for this company -> fall back to search
-    s_items = client.cstools_search(seized_iban or company_uuid).get("items") or []
+    try:
+        s_items = client.cstools_search(seized_iban or company_uuid).get("items") or []
+    except BOError:
+        return {}  # both status reads failed -> unknown status, not a failed identification
     return next((it for it in s_items if it.get("id") == company_uuid),
                 (s_items[0] if s_items else {}))
 
@@ -620,17 +625,22 @@ def _identify(client, parsed: dict, manual_uuid: str | None, reasons: list[str])
         if len(valid) == 1:
             return {"company_uuid": valid[0], "identified_by": "ticket_uuid",
                     "business_name": _lookup_name(client, valid[0])}
-        cand_uuids = valid or cand_uuids
-        resolved, error = _disambiguate_candidates(client, parsed, cand_uuids, reasons)
-        if resolved:
-            return {"company_uuid": resolved, "identified_by": "wallet_iban",
-                    "business_name": _lookup_name(client, resolved)}
-        candidates = [
-            {"id": u, "businessName": _lookup_name(client, u), "regNumber": ""}
-            for u in cand_uuids
-        ]
-        return {"company_uuid": "", "candidates": candidates,
-                "needs_selection": True, "error": error}
+        if len(valid) > 1:
+            # Disambiguate among the KNOWN companies only — never resurrect the
+            # 404 UUIDs (audit B11: they must not reappear as picker candidates).
+            resolved, error = _disambiguate_candidates(client, parsed, valid, reasons)
+            if resolved:
+                return {"company_uuid": resolved, "identified_by": "wallet_iban",
+                        "business_name": _lookup_name(client, resolved)}
+            candidates = [
+                {"id": u, "businessName": _lookup_name(client, u), "regNumber": ""}
+                for u in valid
+            ]
+            return {"company_uuid": "", "candidates": candidates,
+                    "needs_selection": True, "error": error}
+        # valid == 0: none of the ticket UUIDs is a BO company -> fall through
+        # to the search path below (register no. / IBAN / name).
+        reasons.append("no ticket UUID resolved to a BO company — identifying by search")
 
     # 4. Search terms in priority order. The name search retries with relaxed
     # variants (whitespace-collapsed, legal-suffix-stripped) — BO's literal
@@ -726,7 +736,8 @@ def _find_freelancers_by_name(client, full_name: str) -> list[dict]:
     return []
 
 
-def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
+def match_account(client, parsed: dict, manual_uuid: str | None = None,
+                  ticket_iban_source: str = "") -> dict:
     """Run Step 1+2; see module docstring. Never returns a guessed account.
 
     Outcomes: MATCH / NO_MATCH / PERSON_VS_COMPANY, or ``outcome=None`` with
@@ -798,7 +809,9 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
             reasons.append("accountStatusUpdated unavailable — closed account treated as closed-before-ticket")
 
     # Resolve the seized IBAN from the account's Main wallet when not provided.
-    seized_iban_source = "provided" if seized_iban else None
+    # "provided" (from the ticket's seized-IBANs field) vs "debtor_list"
+    # (picked from the debtor IBAN list) is decided by the parser (audit B13).
+    seized_iban_source = (ticket_iban_source or "provided") if seized_iban else None
     main_wallet = None
     if not seized_iban:
         w = _pick_main_wallet(wallets_items)
@@ -883,13 +896,24 @@ def match_account(client, parsed: dict, manual_uuid: str | None = None) -> dict:
         outcome, matched_by = MatchOutcome.MATCH.value, "dob"
         reasons.append(f"unknown account type {account_type!r}: DOB match")
     elif iban_hit or addr["grade"] == STRONG or dob_match:
-        # A positive signal exists but the NAME gate blocked it: per the
-        # identification rules that is not definitive (e.g. the ticket's IBAN
-        # is on this account but the debtor name names someone else).
-        reasons.append(
-            "identification signal present (IBAN/address/DOB) but the debtor "
-            "name could not be positively matched to the account — not "
-            "definitive per the identification rules; operator review")
+        # A positive signal exists but did not clear confirmation. Two distinct
+        # causes (audit B12 — the old text wrongly blamed the name in both):
+        if name_ok is False:
+            reasons.append(
+                "identification signal present (IBAN/address/DOB) but the debtor "
+                "name could not be positively matched to the account — not "
+                "definitive per the identification rules; operator review")
+        elif dob_match and account_type == "Company":
+            # The name agreed; the only extra signal is a date of birth, which
+            # is not a confirming signal for a Company (a company has no DOB).
+            reasons.append(
+                "debtor name matches but the only supporting signal is a date "
+                "of birth, which does not confirm a Company account — operator "
+                "review")
+        else:
+            reasons.append(
+                "an identification signal is present but not sufficient to "
+                "confirm the debtor — operator review")
     elif addr["grade"] == WEAK:
         # Postcode agrees but the street is inconclusive and the identity is
         # name-only: the operator decides (never guess a doppelgänger).

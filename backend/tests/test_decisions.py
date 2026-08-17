@@ -144,28 +144,28 @@ def test_validation_matrix():
     rows = [{"id": 1, "role": "report"}, {"id": 2, "role": "own"}]
 
     w = validate_decisions({"template": "T1", "seizures": rows,
-                            "seizable_eur": 1.0}, ctx, None)
+                            "seizable_eur": 1.0}, ctx)
     assert any("T2 fits" in x for x in w)
 
     w = validate_decisions({"template": "T2", "seizures": [{"id": 2, "role": "own"}],
-                            "seizable_eur": 1.0}, ctx, None)
+                            "seizable_eur": 1.0}, ctx)
     assert any("T1 fits" in x for x in w)
 
     w = validate_decisions({"template": "T2", "seizures": [{"id": 1, "role": "report"}],
-                            "seizable_eur": None}, ctx, None)
+                            "seizable_eur": None}, ctx)
     assert any("own case" in x for x in w)
     assert any("seizable amount is empty" in x for x in w)
 
-    w = validate_decisions({"template": "T7", "recipient_email": ""}, ctx, None)
+    w = validate_decisions({"template": "T7", "recipient_email": ""}, ctx)
     assert any("recipient" in x for x in w)
 
     w = validate_decisions({"template": "T11", "seizable_eur": 5.0,
-                            "recipient_email": "a@b.c"}, ctx, None)
+                            "recipient_email": "a@b.c"}, ctx)
     assert any("OPEN" in x for x in w)
 
     w = validate_decisions({"template": "T1", "seizures": [],
                             "seizable_eur": 100.0, "available_eur": 50.0},
-                           {"options": {"status_bucket": "CLOSED"}}, None)
+                           {"options": {"status_bucket": "CLOSED"}})
     assert any("CLOSED" in x for x in w)
     assert any("exceeds the available balance" in x for x in w)
 
@@ -211,3 +211,24 @@ def test_compose_endpoint(monkeypatch, db, client):
 
     resp = client.post("/api/declaration/compose", json={"decisions": {}})
     assert resp.status_code == 400
+
+
+# --- audit fixes: B2 (amount locale), B4 (no [Comment] slot) --------------- #
+
+def test_seizable_us_and_german_amounts_parse_correctly(monkeypatch, db, client):
+    # B2: "1,234.56" (US) must NOT become 1.23456 in the letter.
+    m = _manual_from_run(monkeypatch, db)
+    for raw, want in (("1,234.56", "1.234,56"), ("1.234,56", "1.234,56"),
+                      ("82,41", "82,41"), ("1000", "1.000,00")):
+        d = {**m["decisions"], "template": "T1", "seizable_eur": raw}
+        out = compose_from_decisions(db, d, m["context"], m["auto"])
+        assert f"{want} EUR" in out["declaration"]["text"], (raw, want)
+
+
+def test_non_comment_template_drops_bullets(monkeypatch, db, client):
+    # B4: a template without a [Comment] slot must not receive seizure bullets
+    # (they would fail the LLM bullet guard and waste a roundtrip).
+    m = _manual_from_run(monkeypatch, db)               # has a reported seizure
+    d = {**m["decisions"], "template": "T6"}            # T6 has no [Comment]
+    out = compose_from_decisions(db, d, m["context"], m["auto"])
+    assert "\t• " not in out["declaration"]["text"]

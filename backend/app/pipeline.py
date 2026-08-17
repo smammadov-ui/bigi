@@ -183,7 +183,8 @@ def run_pipeline(db: Session, raw_text: str, company_uuid: str | None = None,
     with all_workspaces(client) as ws:
         result = _run_checks_and_compose(db, client, raw_text, parsed, fields,
                                          company_uuid, kind, cls_notes, warnings,
-                                         no_match=no_match)
+                                         no_match=no_match,
+                                         iban_source=p.get("seized_iban_source", ""))
     if ws.get("switched"):
         result["warnings"].append(
             "searched across workspaces: " + ", ".join(ws.get("available") or [])
@@ -220,7 +221,8 @@ def _identification_failed(parsed: dict, fields: dict, exc) -> dict:
 
 def _run_checks_and_compose(db: Session, client, raw_text: str, parsed: dict,
                             fields: dict, company_uuid, kind, cls_notes,
-                            warnings: list, no_match: bool = False) -> dict:
+                            warnings: list, no_match: bool = False,
+                            iban_source: str = "") -> dict:
     """Steps 3–10 (matching -> checks -> scenario -> document); see run_pipeline."""
     # --- Step 3: identify + confirm + status (one wallets call, reused) -------
     if no_match:
@@ -239,7 +241,8 @@ def _run_checks_and_compose(db: Session, client, raw_text: str, parsed: dict,
         }
     else:
         try:
-            match = match_account(client, fields, manual_uuid=company_uuid)
+            match = match_account(client, fields, manual_uuid=company_uuid,
+                                  ticket_iban_source=iban_source)
         except BOError as exc:
             return _identification_failed(parsed, fields, exc)
 
@@ -330,7 +333,12 @@ def _run_checks_and_compose(db: Session, client, raw_text: str, parsed: dict,
         # One German bullet per ongoing seizure, built from BO's structured
         # fields (creditor/date/amount) in the seizure check — the free-text
         # comment is only a fallback. compose() inserts them into [Comment].
-        comments = [s.get("description_de") or s.get("comment", "") for s in sc.get("seizures", [])]
+        # Only templates with a [Comment] slot (T2) list them; passing bullets
+        # to any other template makes the LLM output fail the bullet-count
+        # guard and waste a roundtrip (audit B4).
+        comments = (
+            [s.get("description_de") or s.get("comment", "") for s in sc.get("seizures", [])]
+            if "[Comment]" in TEMPLATES[template_id] else [])
         text, composed_by = llm.compose(
             template_id,
             TEMPLATES[template_id],
@@ -378,7 +386,7 @@ def _run_checks_and_compose(db: Session, client, raw_text: str, parsed: dict,
         "declaration": declaration,
         # Manual mode: the auto decisions as an editable set + recompose context.
         "manual": build_manual(
-            parsed=parsed, scenario=scenario, plan=plan, declaration=declaration,
+            parsed=parsed, scenario=scenario, plan=plan,
             account=_account_public(match),
             balance={**bal, "seizable_eur": seizable_eur},
             seizure_check=sc, wallets=match.get("wallets_items")),

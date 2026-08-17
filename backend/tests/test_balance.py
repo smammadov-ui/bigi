@@ -64,5 +64,5 @@ def test_held_funds_sums_own_case_too():
 def test_held_funds_empty():
     out = held_funds({"seizures": [], "ignored_same_case": []})
     assert out["held_eur"] == 0.0
-    assert out["held_eur_de"] is None
+    assert out["held_eur_de"] == "0,00"        # 0.0 renders, not None (audit B20)
     assert out["client_total_eur"] is None

@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 
 from .bo_client import BOError, is_processing, is_settling
-from .formatting import de_amount, de_date
+from .formatting import de_amount, de_date, iso_date_any
 
 # ---------------------------------------------------------------------------
 # Alerts (Step 3)
@@ -302,24 +302,31 @@ def check_ongoing_seizures(client, company_uuid: str, ticket_case_ref: str = "")
     # take the latest ``created`` (the safer cutoff — it drops fewer competitors).
     # With no own-case seizure there is no cutoff, so nothing is filtered here
     # (the missing own case is surfaced as ``own_case_missing``).
+    # Compare on the ISO-normalized date: BO returns `created` as an ISO string
+    # in most cases but as an epoch-ms integer in others (see matching.py) — a
+    # raw string compare would misorder a mixed listing (audit B16). Day
+    # granularity is fine here (same-day competitors are kept, the safer side).
+    def _created_iso(s: dict) -> str:
+        return iso_date_any(s.get("created") or "")
+
     ignored_later: list[dict] = []
-    own_created = [str(s.get("created")) for s in ignored if s.get("created")]
+    own_created = [d for s in ignored if (d := _created_iso(s))]
     if own_created:
         cutoff = max(own_created)
         kept: list[dict] = []
         for s in seizures:
-            created = str(s.get("created") or "")
+            created = _created_iso(s)
             # Only drop when we can positively prove it is later than the cutoff;
-            # an unknown/empty created is kept (cannot be shown to be junior).
+            # an unknown/unparseable created is kept (cannot be shown to be junior).
             if created and created > cutoff:
                 ignored_later.append(s)
             else:
                 kept.append(s)
         seizures = kept
 
-    seizures.sort(key=lambda s: str(s.get("created") or ""))
-    ignored_later.sort(key=lambda s: str(s.get("created") or ""))
-    settling.sort(key=lambda s: str(s.get("created") or ""))
+    seizures.sort(key=_created_iso)
+    ignored_later.sort(key=_created_iso)
+    settling.sort(key=_created_iso)
     return {
         "processing_count": len(seizures),
         "seizures": seizures,
@@ -395,7 +402,7 @@ def held_funds(seizure_check: dict) -> dict:
     )
     return {
         "held_eur": held,
-        "held_eur_de": de_amount(held) if held else None,
+        "held_eur_de": de_amount(held) if held is not None else None,
         "client_total_eur": client_total,
         "client_total_eur_de": de_amount(client_total) if client_total is not None else None,
     }
