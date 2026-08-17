@@ -3,10 +3,6 @@
 All network calls are stubbed by monkeypatching httpx.post (and the request via the
 SDK-free raw-httpx path). No real HTTP is ever made.
 """
-import json
-
-import pytest
-
 from app import llm
 from app.templates import TEMPLATES, deterministic_fill
 

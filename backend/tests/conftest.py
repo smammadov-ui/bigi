@@ -6,12 +6,9 @@ yielding either the HTTP ``client`` or a raw ``db`` Session.
 """
 from __future__ import annotations
 
-import os
-
 import pytest
 from fastapi.testclient import TestClient
 
-from app import db as db_module
 from app.config import get_settings
 from app.db import SessionLocal, init_db, reset_engine
 from app.main import app

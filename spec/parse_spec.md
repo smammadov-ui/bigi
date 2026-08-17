@@ -1,7 +1,7 @@
 # parse_spec.md — deterministic Jira parser rules
 
 `app/parser.py` turns the raw text of a German seizure ticket (paste / Jira
-webhook / Jira API pull) into a flat dict of parsed fields. It is **pure** —
+Jira API pull) into a flat dict of parsed fields. It is **pure** —
 string + regex work only, no LLM, no network. Imports only
 `parse_date_iso` / `parse_decimal` from `app/formatting.py`.
 

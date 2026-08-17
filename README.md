@@ -59,9 +59,13 @@ Dev (two processes):
 
 ```bash
 cd backend && python3 -m venv .venv && . .venv/bin/activate \
-  && pip install -r requirements.txt && uvicorn app.main:app --reload   # :8000
-cd frontend && npm install && npm run dev                               # :5173 (proxies to :8000)
+  && pip install -r requirements-dev.txt && uvicorn app.main:app --reload   # :8000 (prod: requirements.txt)
+cd frontend && npm install && npm run dev                                   # :5173 (proxies to :8000)
 ```
+
+Single process (backend serves the built SPA at `http://localhost:8000`):
+`cd frontend && npm run deploy` builds the SPA and refreshes `backend/static`,
+then run uvicorn as above (no vite dev server needed).
 
 Desktop app (Mac `.app`/`.dmg`, Windows NSIS installer — Tauri 2 shell with the
 backend bundled as a PyInstaller sidecar; DB lives in the OS per-user app-data dir):
@@ -101,15 +105,25 @@ Secrets are always masked (`••••1234`) toward the browser, whatever the 
 ## Ingestion
 
 - Paste the ticket → **Generate**
-- `POST /api/declaration` `{raw_text, company_uuid?}`
+- `POST /api/declaration` `{raw_text, company_uuid?, no_match?, field_overrides?}`
 - Jira: fetch by key/link (`POST /api/jira/fetch`), browse by JQL
-  (`GET /api/jira/search`), webhook (`POST /api/webhook/jira`, optional
-  `JIRA_WEBHOOK_SECRET`)
+  (`GET /api/jira/search`)
 
 Result `status`: `ok` (scenario + document), `pending_selection` (operator must
 pick a candidate account / enter a UUID; the UI re-runs with it), `halted`
 (invalid ticket data — masked IBAN, several debtor IBANs, unparseable amount —
 no BO call is made).
+
+## Manual mode
+
+Auto proposes, operator disposes (`docs/manual-mode-plan.md`). Every run carries
+an editable **decision set** (`result.manual`); the "Manual mode" toggle unlocks
+the template, per-seizure roles (own / report / ignore), amounts, seized IBAN
+and subject, and the document is recomposed live via `POST
+/api/declaration/compose` — a pure function of the decision set, no BO call.
+Contradictions surface as non-blocking warnings; the subject auto-follows the
+template until pinned; the scenario badge shows `T1 — manual (auto: S2/T2)` on
+override. Parsed-field edits re-run identification + checks (`field_overrides`).
 
 ## BO endpoints used (all read-only)
 
@@ -130,20 +144,26 @@ degrades to single-workspace with a visible warning.
 ## Tests
 
 ```bash
-cd backend && python -m pytest -q     # 250 tests, offline (StubBO)
+cd backend && python -m pytest -q     # offline (StubBO), ~400 tests
 ```
 
 `tests/test_scenarios.py` drives every scenario end-to-end through
 `run_pipeline`; the rest cover parser, matching/confirmation, checks, amounts,
-templates T1–T11, the guarded LLM composer, settings, webhook, and Jira.
+templates T1–T11, the guarded LLM composer, manual-mode compose, settings, and Jira.
 
 ## Known gaps / open spec questions
 
-- **S5 detection heuristic** (spec Q10a): "physical person" = DOB present and
-  no register number; the freelancer-account cross-lookup is not implemented.
+- **S5 detection heuristic** (spec Q10a): "physical person" = DOB present, no
+  register number, and no company legal form in the debtor name; the
+  freelancer-account cross-lookup IS implemented (name gate accepts the CDD
+  PersonFullName for freelancers).
 - **T11 `[Case number]`** (spec Q11): rendered from the Jira case reference —
   the BO case-number field is still unconfirmed.
 - T5 (RFI) renders operator guidance, not a customer letter, by design.
 - No recipient directory: the operator addresses the email/letter themselves.
-- Security posture matches mini (local/demo): plaintext secrets in the local
-  SQLite settings table, CORS `*`, webhook open unless a secret is set.
+- Security posture (local single-operator tool): secrets are plaintext in the
+  local SQLite settings table (masked toward the browser). CORS is locked to
+  local origins; the desktop shell binds 127.0.0.1 on a random port; the
+  env/file BO token is withheld if `bo_base_url` is redirected to a host that
+  does not match `BO_BASE_URL`. Run the Docker image only on a trusted
+  interface.

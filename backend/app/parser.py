@@ -152,9 +152,6 @@ _WS_RE = re.compile(r"\s+")
 _REG_WS_RE = re.compile(r"\s+")
 
 
-def norm_reg(s) -> str:
-    """Normalise a register number: strip + drop all whitespace + upper-case."""
-    return _REG_WS_RE.sub("", str(s or "").strip()).upper()
 
 
 def _strip_noise(value: str) -> str:

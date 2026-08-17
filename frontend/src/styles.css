@@ -1,4 +1,4 @@
-/* mini — "Ledger" dark theme. IBM Plex Sans/Mono UI, Source Serif 4 letter,
+/* bigi — "Ledger" dark theme. IBM Plex Sans/Mono UI, Source Serif 4 letter,
    pink accent. Hero declaration + sticky rail of reference panels. */
 
 :root {
@@ -157,18 +157,8 @@ a:hover {
   margin: 0;
 }
 
-.section-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
 .muted {
   color: var(--text-dim);
-}
-.faint {
-  color: var(--text-faint);
 }
 .small {
   font-size: 12px;
@@ -719,13 +709,6 @@ button {
   border-top: 1px solid var(--border);
 }
 
-/* ---- Settings: save bar ---- */
-.save-bar {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-
 /* ---- Misc ---- */
 .spinner {
   display: inline-block;
@@ -765,10 +748,6 @@ button {
   background: var(--border);
   margin: 14px 0;
   border: none;
-}
-
-.scroll-x {
-  overflow-x: auto;
 }
 
 .toast {

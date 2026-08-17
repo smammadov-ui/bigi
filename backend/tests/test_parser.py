@@ -1,5 +1,6 @@
-"""Tests for app.parser — deterministic Jira parser + norm_reg."""
-from app.parser import PARSED_FIELDS, empty_parsed, norm_reg, parse_jira
+"""Tests for app.parser — deterministic Jira parser."""
+from app.matching import norm_reg
+from app.parser import PARSED_FIELDS, empty_parsed, parse_jira
 
 
 SAMPLE_TICKET = """\

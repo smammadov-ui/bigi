@@ -15,7 +15,7 @@ BIGI="$(cd "$ROOT/.." && pwd)"                          # bigi
 source "$HOME/.cargo/env" 2>/dev/null || true
 
 echo "==> [1/5] Build frontend SPA"
-( cd "$BIGI/frontend" && npm run build )
+( cd "$BIGI/frontend" && npm install --silent && npm run build )
 
 echo "==> [2/5] Build Python sidecar (PyInstaller, onedir)"
 ( cd "$BIGI/backend" && rm -rf build dist && \

@@ -252,26 +252,20 @@ def test_search_issues_bounds_unbounded_jql(monkeypatch):
 # --- match UUIDs from comments (submitters post them there now) --------------------
 
 
-def test_extract_match_uuids_labeled_and_bare():
-    from app.jira import extract_match_uuids
+def test_extract_match_uuid_tiers_labeled_and_bare():
+    from app.jira import extract_match_uuid_tiers
 
     text = ("Hello, definitive match: 11111111-1111-1111-1111-111111111111\n"
             "also potential match 22222222-2222-2222-2222-222222222222 maybe\n"
             "unrelated: 33333333-3333-3333-3333-333333333333")
-    out = extract_match_uuids(text)
-    assert out == ["11111111-1111-1111-1111-111111111111",
-                   "22222222-2222-2222-2222-222222222222",
-                   "33333333-3333-3333-3333-333333333333"]
-
-
-def test_extract_match_uuids_dedupes_and_handles_empty():
-    from app.jira import extract_match_uuids
-
-    assert extract_match_uuids("definitive match: 11111111-1111-1111-1111-111111111111 "
-                               "and again 11111111-1111-1111-1111-111111111111") == [
-        "11111111-1111-1111-1111-111111111111"]
-    assert extract_match_uuids("no uuids here") == []
-    assert extract_match_uuids("") == []
+    d, p, b = extract_match_uuid_tiers(text)
+    assert d == ["11111111-1111-1111-1111-111111111111"]
+    assert p == ["22222222-2222-2222-2222-222222222222"]
+    assert b == ["11111111-1111-1111-1111-111111111111",
+                 "22222222-2222-2222-2222-222222222222",
+                 "33333333-3333-3333-3333-333333333333"]
+    assert extract_match_uuid_tiers("no uuids here") == ([], [], [])
+    assert extract_match_uuid_tiers("") == ([], [], [])
 
 
 def test_fetch_comment_match_uuids(monkeypatch):
@@ -305,19 +299,20 @@ def test_fetch_comment_match_uuids_failure_is_empty(monkeypatch):
 
 
 def test_seizure_url_uuids_are_ignored():
-    from app.jira import extract_match_uuid_tiers, extract_match_uuids
+    from app.jira import extract_match_uuid_tiers
 
     seizure = ("Backoffice URL to the created seizure: "
                "[https://inhouse.finom.co/monitoring/seizures/"
                "44444444-4444-4444-4444-444444444444/transactions]"
                "(https://inhouse.finom.co/monitoring/seizures/"
                "44444444-4444-4444-4444-444444444444/transactions)")
-    assert extract_match_uuids(seizure) == []
+    # The seizure-link UUID appears in NO tier (it is not a company match).
+    assert extract_match_uuid_tiers(seizure) == ([], [], [])
     # Mixed: the seizure link's UUID never competes with a real match.
     mixed = "Definitive matches: 11111111-1111-1111-1111-111111111111\n" + seizure
-    assert extract_match_uuids(mixed) == ["11111111-1111-1111-1111-111111111111"]
-    d, p, b = extract_match_uuid_tiers(mixed)
+    d, _, b = extract_match_uuid_tiers(mixed)
     assert d == ["11111111-1111-1111-1111-111111111111"]
+    assert "44444444-4444-4444-4444-444444444444" not in b
     assert b == ["11111111-1111-1111-1111-111111111111"]  # labeled line re-counts as bare
 
 

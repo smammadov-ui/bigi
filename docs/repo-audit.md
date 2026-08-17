@@ -1,5 +1,7 @@
 # Repo audit — bugs + trash (2026-08-13)
 
+> **RESOLVED 2026-08-13.** All 20 bugs fixed and all agreed trash removed across five commits (security, backend-correctness, frontend, cleanup). Decisions: webhook route DELETED; mobile icon sets KEPT; the three app-dead helpers (`extract_match_uuids`, `settings_store.get`, `parser.norm_reg`) DELETED with their tests rewired to the live functions. B3 resolved by making the trace claim accurate + adding a `--redact` share-safe mode (diagnostics kept). Tests: 398 pass; pyflakes clean.
+
 Read-only sweep of the whole repo (backend, frontend, desktop, hygiene) by two
 review passes plus session knowledge. **Nothing deleted or changed** — this is
 the review list. Tests currently: **395 passed**. Git working tree clean;

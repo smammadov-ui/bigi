@@ -7,9 +7,10 @@ from app import settings_store
 # --- store-level ---------------------------------------------------------- #
 
 def test_defaults_when_unset(db):
-    assert settings_store.get(db, "llm_provider") == "openai"
-    assert settings_store.get(db, "jira_jql") == "project = FPOPCL ORDER BY created DESC"
-    assert settings_store.get(db, "bo_base_url") == ""
+    v = settings_store.get_all(db)
+    assert v["llm_provider"] == "openai"
+    assert v["jira_jql"] == "project = FPOPCL ORDER BY created DESC"
+    assert v["bo_base_url"] == ""
 
 
 def test_mask_helper():

@@ -137,22 +137,6 @@ def extract_match_uuid_tiers(text: str) -> tuple[list[str], list[str], list[str]
     return definitive, potential, bare
 
 
-def extract_match_uuids(text: str) -> list[str]:
-    """Company UUIDs from free text (a Jira comment), best-first and deduped.
-
-    Submitters have started posting the definitive/potential match UUIDs in
-    COMMENTS instead of the description. Order of trust: UUIDs on a line
-    labeled "definitive match" -> "potential match" -> any bare UUID token.
-    Seizure-link UUIDs are ignored (see ``extract_match_uuid_tiers``).
-    """
-    definitive, potential, bare = extract_match_uuid_tiers(text)
-    out: list[str] = []
-    for u in definitive + potential + bare:
-        if u not in out:
-            out.append(u)
-    return out
-
-
 def fetch_comment_match_uuids(jira_cfg: dict, issue_key: str) -> list[str]:
     """Company UUIDs found in the issue's comments (read-only; [] on failure).
 

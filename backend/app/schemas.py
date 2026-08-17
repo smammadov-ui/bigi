@@ -58,10 +58,6 @@ class BigiError(Exception):
     code = 400
 
 
-class BigiNotFound(BigiError):
-    code = 404
-
-
 class BigiUpstream(BigiError):
     code = 502
 
@@ -101,14 +97,5 @@ class Scenario(str, Enum):
     ROUTED_OUT = "ROUTED_OUT"      # criminal / restricted / manual review
 
 
-# Scenarios whose §840 declaration presumes this ticket's seizure was already
-# submitted in BO ("own case"). bigi never creates it — a missing own-case
-# seizure is surfaced as a warning, not an action.
-OWN_CASE_SCENARIOS = frozenset({Scenario.S1, Scenario.S2})
-
+# The single closed label set — used by the scenario/template totality test.
 SCENARIOS: tuple[str, ...] = tuple(s.value for s in Scenario)
-
-
-def is_scenario(label) -> bool:
-    """True iff ``label`` is exactly one of the coded Scenario values."""
-    return isinstance(label, str) and label in set(SCENARIOS)

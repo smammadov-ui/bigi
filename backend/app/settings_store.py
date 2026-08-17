@@ -40,17 +40,6 @@ def mask(secret: str) -> str:
     return ("••••" + s[-4:]) if len(s) >= 4 else ("••••" if s else "")
 
 
-def get(db: Session, key: str) -> str:
-    """Return the stored value for ``key``, else its env fallback, else default."""
-    row = db.get(AppSetting, key)
-    if row is not None and row.value != "":
-        return row.value
-    env_val = env_fallbacks().get(key, "")
-    if env_val != "":
-        return env_val
-    return DEFAULTS.get(key, "")
-
-
 def source_of(db: Session, key: str) -> str:
     """Where the effective value comes from: "db" | "env" | "default"."""
     row = db.get(AppSetting, key)

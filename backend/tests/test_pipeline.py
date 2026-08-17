@@ -12,7 +12,7 @@ import pytest
 
 from app import pipeline
 from app.schemas import BigiError
-from tests.fixtures import CASE_REF, IBAN, UUID, UUID2, company, fields, raw_ticket
+from tests.fixtures import CASE_REF, UUID, UUID2, company, fields, raw_ticket
 from tests.stub_bo import StubBO
 
 RESULT_KEYS = {

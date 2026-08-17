@@ -6,7 +6,6 @@ key figures/flags in the composed German text. No LLM key -> deterministic.
 """
 from __future__ import annotations
 
-import pytest
 
 from app import pipeline
 from tests.fixtures import CASE_REF, IBAN, UUID, UUID2, company, fields, raw_ticket
