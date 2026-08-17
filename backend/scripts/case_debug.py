@@ -1,9 +1,9 @@
-"""Sanitized decision trace for one Jira ticket — run LOCALLY while the bigi
-server is up:
+"""Decision trace for one Jira ticket — run LOCALLY while the bigi server is up:
 
     python3 scripts/case_debug.py FPOPCL-24636
     python3 scripts/case_debug.py FPOPCL-24636 --company <uuid>   # replay an operator pick
     python3 scripts/case_debug.py FPOPCL-24636 --no-match         # operator: none of these
+    python3 scripts/case_debug.py FPOPCL-24636 --redact           # share-safe output
     python3 scripts/case_debug.py FPOPCL-24636 --host http://localhost:8000
 
 Manual-mode replay (recompose from the run's decision set, no BO re-fetch):
@@ -14,8 +14,13 @@ Manual-mode replay (recompose from the run's decision set, no BO re-fetch):
 
 Fetches the issue through the running backend (same path the UI uses) and
 prints WHY the pipeline decided what it decided: scenario, plan notes, match
-outcome/reasons, checks. Output is sanitized — booleans, enums, counts, and
-reason strings only; no token, no names, no IBANs, no amounts — safe to share.
+outcome/reasons, checks.
+
+Output NEVER contains the INTTOKEN or a full IBAN. By default it is a full
+DIAGNOSTIC trace that DOES include the business name, compared addresses,
+reason strings and amounts — treat it as internal. Pass ``--redact`` for a
+share-safe trace (names/addresses/reasons/amounts dropped) before pasting into
+a ticket or chat.
 """
 from __future__ import annotations
 
@@ -41,6 +46,7 @@ def main() -> int:
     if "--company" in args:
         company = args[args.index("--company") + 1].strip()
     no_match = "--no-match" in args
+    redact = "--redact" in args
     template = ""
     if "--template" in args:
         template = args[args.index("--template") + 1].strip()
@@ -80,7 +86,7 @@ def main() -> int:
 
     from app.trace import build_trace
 
-    trace = build_trace(d)
+    trace = build_trace(d, redact=redact)
 
     if template or roles or seizable is not None:
         # Manual-mode replay: edit the run's decision set and recompose (pure —

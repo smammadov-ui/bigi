@@ -7,8 +7,8 @@ app. bigi is READ-ONLY toward Back-Office: no scenario creates a seizure here
 — by the time a TPD is generated, this ticket's seizure is expected to already
 exist in BO (surfaced as the "own case" in the seizure check).
 
-The pipeline result returned by ``/api/declaration`` / ``/api/webhook/jira`` /
-``/api/jira/fetch`` is a plain dict (documented in ``pipeline.py``) — no strict
+The pipeline result returned by ``/api/declaration`` / ``/api/jira/fetch``
+is a plain dict (documented in ``pipeline.py``) — no strict
 response model is needed for it. The errors below are mapped to HTTP status
 codes by the routers (``BigiError.code`` -> ``HTTPException``).
 """

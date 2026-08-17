@@ -148,9 +148,38 @@ def llm_config(db: Session) -> dict:
     }
 
 
+def _same_host(a: str, b: str) -> bool:
+    from urllib.parse import urlsplit
+
+    ha = urlsplit((a or "").strip()).netloc.lower()
+    hb = urlsplit((b or "").strip()).netloc.lower()
+    return bool(ha) and ha == hb
+
+
 def bo_config(db: Session) -> dict:
+    """Effective BO ``{base_url, inttoken}`` for server-side use.
+
+    Security guard (audit B1): the shared INTTOKEN provisioned via env/.env or
+    the token FILE is only attached when the effective ``base_url`` points at
+    the SAME host as the env-configured ``BO_BASE_URL``. If someone redirects
+    ``bo_base_url`` (e.g. through the settings API) to a different host, the
+    token is withheld — so it can never be exfiltrated to an attacker's host.
+    A UI-set token (source "db") is the operator's own choice and is not
+    second-guessed; when no env ``BO_BASE_URL`` is configured there is nothing
+    to validate against and the value is used as-is.
+    """
     v = get_all(db)
-    return {"base_url": v["bo_base_url"], "inttoken": v["bo_inttoken"]}
+    base = v["bo_base_url"]
+    token = v["bo_inttoken"]
+    out = {"base_url": base, "inttoken": token}
+    if token and source_of(db, "bo_inttoken") == "env":
+        env_base = env_fallbacks().get("bo_base_url", "")
+        if env_base and not _same_host(base, env_base):
+            out["inttoken"] = ""
+            out["token_withheld"] = (
+                "BO base_url host does not match the env-configured BO_BASE_URL "
+                "— the shared token was withheld to prevent exfiltration")
+    return out
 
 
 def jira_config(db: Session) -> dict:

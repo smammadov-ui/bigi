@@ -1,8 +1,14 @@
 """FastAPI app entrypoint.
 
-Wires CORS (open, dev), DB init on startup, /health, the four API routers,
-and — last — serves a built SPA from ``bigi/backend/static`` when present
-(optional single-process mode).
+Wires CORS (locked to local origins), DB init on startup, /health, the API
+routers, and — last — serves a built SPA from ``bigi/backend/static`` when
+present (optional single-process mode).
+
+bigi is a LOCAL single-operator tool: the desktop shell binds 127.0.0.1 on a
+random port and the dev server defaults to localhost. CORS is restricted to
+local origins (no wildcard, no credentials) so a malicious web page the
+operator happens to have open cannot drive the API. The Docker image binds
+0.0.0.0 for container port-mapping — run it only on a trusted interface.
 """
 from __future__ import annotations
 
@@ -14,7 +20,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .db import init_db
-from .routers import declaration, jira, settings, webhook
+from .routers import declaration, jira, settings
 
 
 @asynccontextmanager
@@ -29,17 +35,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Local origins only. The bundled SPA is served same-origin (mounted at "/");
+# the vite dev server proxies /api server-side; the Tauri webview is
+# same-origin. No cross-site browser client legitimately needs credentials.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[
+        "http://localhost:5173", "http://127.0.0.1:5173",   # vite dev server
+        "http://localhost:8000", "http://127.0.0.1:8000",   # single-process
+        "tauri://localhost", "https://tauri.localhost",      # desktop webview
+    ],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(settings.router)
 app.include_router(declaration.router)
-app.include_router(webhook.router)
 app.include_router(jira.router)
 
 

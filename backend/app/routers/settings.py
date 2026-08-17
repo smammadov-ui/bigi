@@ -73,6 +73,8 @@ def test_bo(db: Session = Depends(get_db)) -> dict:
     from ..bo_client import BOClient, BOError
 
     cfg = settings_store.bo_config(db)
+    if cfg.get("token_withheld"):
+        return {"ok": False, "detail": cfg["token_withheld"]}
     if not cfg.get("base_url") or not cfg.get("inttoken"):
         return {"ok": False, "detail": "BO base URL / token not set"}
     try:

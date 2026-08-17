@@ -1,4 +1,4 @@
-"""Jira helpers: Atlassian Document Format (ADF) flatten, webhook description
+"""Jira helpers: Atlassian Document Format (ADF) flatten, issue description
 extraction, and read-only Jira REST API pulls (fetch one issue / search).
 
 The Jira API token is used server-side only (Basic auth) and is NEVER logged.
@@ -65,8 +65,8 @@ def flatten_adf(node) -> str:
     return inner
 
 
-def description_from_webhook(payload: dict) -> str:
-    """Jira webhook JSON -> the issue description as plain text.
+def description_from_issue(payload: dict) -> str:
+    """Jira issue JSON ({"issue": {"fields": ...}}) -> the description as plain text.
 
     Reads ``payload['issue']['fields']['description']`` which may be a plain
     string OR an ADF dict (flattened). Falls back to ``''`` if absent.
@@ -255,7 +255,7 @@ def fetch_issue(jira_cfg: dict, issue_key: str) -> dict:
     return {
         "key": data.get("key", key),
         "summary": _summary_text(fields),
-        "description": description_from_webhook({"issue": {"fields": fields}}),
+        "description": description_from_issue({"issue": {"fields": fields}}),
     }
 
 

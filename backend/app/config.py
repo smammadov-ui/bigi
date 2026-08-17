@@ -2,7 +2,7 @@
 
 Two kinds of values live here:
 
-* App plumbing: the SQLite DB URL and the optional Jira webhook secret.
+* App plumbing: the SQLite DB URL.
 * **Credential fallbacks**: every Settings-UI credential can also be supplied
   via environment / a local ``.env`` file (``BO_BASE_URL``, ``BO_INTTOKEN``,
   ``LLM_API_KEY``, ``JIRA_API_TOKEN``, …). A value saved in the Settings UI
@@ -22,7 +22,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     bigi_db: str = "sqlite:///./bigi.db"
-    jira_webhook_secret: str = ""  # optional; when set, webhook requires it
 
     # --- credential fallbacks (Settings UI wins when set) -------------------
     # When BO_INTTOKEN itself is unset, the token is read from this file on

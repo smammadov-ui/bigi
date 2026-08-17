@@ -15,8 +15,8 @@ Then register in ~/Library/Application Support/Claude/claude_desktop_config.json
     {
       "mcpServers": {
         "finom-bo": {
-          "command": "/Users/s.mammadov/Documents/Gitlab/feizure/bigi/backend/.venv/bin/python3",
-          "args": ["/Users/s.mammadov/Documents/Gitlab/feizure/bigi/backend/scripts/bo_mcp.py"]
+          "command": "/Users/s.mammadov/Documents/Gitlab/bigi/backend/.venv/bin/python3",
+          "args": ["/Users/s.mammadov/Documents/Gitlab/bigi/backend/scripts/bo_mcp.py"]
         }
       }
     }

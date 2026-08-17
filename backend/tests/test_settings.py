@@ -244,3 +244,49 @@ def test_missing_token_file_is_harmless(db, monkeypatch):
         assert settings_store.bo_config(db)["inttoken"] == ""
     finally:
         _clear_settings_cache()
+
+
+# --- token-host guard (audit B1) ------------------------------------------ #
+
+def test_env_token_withheld_when_base_url_redirected(db, monkeypatch):
+    # Env provisions BO for the real host; an operator/attacker then points
+    # bo_base_url at a DIFFERENT host via the settings API. The shared env
+    # token must NOT be attached to the foreign host.
+    monkeypatch.setenv("BO_BASE_URL", "https://inhouse.finom.co")
+    monkeypatch.setenv("BO_INTTOKEN", "env-token-1234")
+    _clear_settings_cache()
+    try:
+        settings_store.update(db, {"bo_base_url": "https://evil.example"})
+        cfg = settings_store.bo_config(db)
+        assert cfg["base_url"] == "https://evil.example"
+        assert cfg["inttoken"] == ""                 # withheld
+        assert "withheld" in cfg["token_withheld"]
+    finally:
+        _clear_settings_cache()
+
+
+def test_env_token_kept_for_matching_host(db, monkeypatch):
+    # Same host (different path/case) -> token is attached as normal.
+    monkeypatch.setenv("BO_BASE_URL", "https://inhouse.finom.co")
+    monkeypatch.setenv("BO_INTTOKEN", "env-token-1234")
+    _clear_settings_cache()
+    try:
+        settings_store.update(db, {"bo_base_url": "https://inhouse.finom.co/api"})
+        cfg = settings_store.bo_config(db)
+        assert cfg["inttoken"] == "env-token-1234"
+        assert "token_withheld" not in cfg
+    finally:
+        _clear_settings_cache()
+
+
+def test_ui_set_token_not_second_guessed(db, monkeypatch):
+    # A token the operator set via the UI (db source) is their own choice.
+    monkeypatch.setenv("BO_BASE_URL", "https://inhouse.finom.co")
+    _clear_settings_cache()
+    try:
+        settings_store.update(db, {"bo_inttoken": "ui-token", "bo_base_url": "https://other.example"})
+        cfg = settings_store.bo_config(db)
+        assert cfg["inttoken"] == "ui-token"
+        assert "token_withheld" not in cfg
+    finally:
+        _clear_settings_cache()
